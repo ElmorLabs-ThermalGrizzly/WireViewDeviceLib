@@ -31,17 +31,19 @@ public partial class WireViewPro2Device
         BinaryPrimitives.WriteUInt32LittleEndian(frame.AsSpan(1, 4), addr);
         BinaryPrimitives.WriteUInt32LittleEndian(frame.AsSpan(5, 4), len);
 
-        return await WithPortLockAsync(() =>
+        return await Task.Run(() =>
         {
             ct.ThrowIfCancellationRequested();
 
+            _port!.Open();
             _port!.DiscardInBuffer();
-            _port.Write(frame, 0, frame.Length);
+            _port!.Write(frame, 0, frame.Length);
 
             var rx = ReadExact((int)len);
 
             // Enable UI updates
-            _port.Write(new byte[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)SCREEN_CMD.SCREEN_RESUME_UPDATES }, 0, 2);
+            _port!.Write(new byte[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)SCREEN_CMD.SCREEN_RESUME_UPDATES }, 0, 2);
+            _port!.Close();
 
             if (rx is null)
                 throw new TimeoutException("SPI flash read timed out.");
@@ -87,11 +89,9 @@ public partial class WireViewPro2Device
         IProgress<double>? progress = null,
         CancellationToken ct = default)
     {
-        // Disable UI updates during bulk read
-        WithPortLock(() =>
-        {
-            _port!.Write(new byte[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)SCREEN_CMD.SCREEN_PAUSE_UPDATES }, 0, 2);
-        });
+        _port!.Open();
+        _port!.Write(new byte[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)SCREEN_CMD.SCREEN_PAUSE_UPDATES }, 0, 2);
+        _port!.Close();
 
         try
         {
@@ -108,11 +108,9 @@ public partial class WireViewPro2Device
         }
         finally
         {
-            // Enable UI updates after bulk read (even on exceptions/cancel)
-            WithPortLock(() =>
-            {
-                _port!.Write(new byte[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)SCREEN_CMD.SCREEN_RESUME_UPDATES }, 0, 2);
-            });
+            _port!.Open();
+            _port!.Write(new byte[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)SCREEN_CMD.SCREEN_RESUME_UPDATES }, 0, 2);
+            _port!.Close();
             progress?.Report(1.0);
         }
     }
@@ -121,11 +119,9 @@ public partial class WireViewPro2Device
         IProgress<double>? progress = null,
         CancellationToken ct = default)
     {
-        // Disable UI updates during bulk read
-        WithPortLock(() =>
-        {
-            _port!.Write(new byte[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)SCREEN_CMD.SCREEN_PAUSE_UPDATES }, 0, 2);
-        });
+        _port!.Open();
+        _port!.Write(new byte[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)SCREEN_CMD.SCREEN_PAUSE_UPDATES }, 0, 2);
+        _port!.Close();
 
         try
         {
@@ -143,11 +139,9 @@ public partial class WireViewPro2Device
         }
         finally
         {
-            // Enable UI updates after bulk read (even on exceptions/cancel)
-            WithPortLock(() =>
-            {
-                _port!.Write(new byte[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)SCREEN_CMD.SCREEN_RESUME_UPDATES }, 0, 2);
-            });
+            _port!.Open();
+            _port!.Write(new byte[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)SCREEN_CMD.SCREEN_RESUME_UPDATES }, 0, 2);
+            _port!.Close();
             progress?.Report(1.0);
         }
     }
