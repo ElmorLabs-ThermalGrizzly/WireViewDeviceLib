@@ -1,11 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.IO;
-
-namespace WireView2.Device
+﻿namespace WireView2.Device
 {
     public interface IWireViewDevice
     {
@@ -17,8 +10,6 @@ namespace WireView2.Device
 
         void Connect();
         void Disconnect();
-        void StartSampling();
-        void StopSampling();
         event EventHandler<DeviceData>? DataUpdated;
         event EventHandler<bool>? ConnectionChanged;
     }

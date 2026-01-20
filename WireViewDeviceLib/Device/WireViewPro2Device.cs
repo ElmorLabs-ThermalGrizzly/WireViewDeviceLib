@@ -7,7 +7,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Management;
 
-
 namespace WireView2.Device
 {
     // Use SharedSerialPort instead of SerialPort
@@ -170,9 +169,6 @@ namespace WireView2.Device
 
             ConnectionChanged?.Invoke(this, false);
         }
-
-        public void StartSampling() { }
-        public void StopSampling() { }
 
         public string? ReadBuildString()
         {
