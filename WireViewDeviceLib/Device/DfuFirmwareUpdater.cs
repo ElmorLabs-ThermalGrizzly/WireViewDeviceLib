@@ -1,15 +1,10 @@
-using System;
-using System.IO;
 using System.Runtime.InteropServices;
-using System.Threading.Tasks;
-using System.Collections.Generic;
-using System.Linq;
 using Microsoft.Win32.SafeHandles;
 using System.Management;
 
 namespace WireView2.Device
 {
-    internal static class DfuFirmwareUpdater
+    public static class DfuFirmwareUpdater
     {
         public const int DfuVid = 0x0483;
         public const int DfuPid = 0xDF11;

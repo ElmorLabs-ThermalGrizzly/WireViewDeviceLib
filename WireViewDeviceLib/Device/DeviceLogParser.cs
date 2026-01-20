@@ -1,10 +1,8 @@
-using System;
-using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
 namespace WireView2.Device;
 
-internal static class DeviceLogParser
+public static class DeviceLogParser
 {
     // Firmware constants / layout assumptions
     private const int SENSOR_POWER_NUM = 6;
