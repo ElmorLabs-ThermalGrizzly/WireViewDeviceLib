@@ -1,6 +1,4 @@
-﻿using System;
-using System.Management;
-using System.Threading;
+﻿using System.Management;
 using Timer = System.Threading.Timer;
 
 namespace WireView2.Device
