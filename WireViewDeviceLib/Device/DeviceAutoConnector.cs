@@ -15,7 +15,7 @@ namespace WireView2.Device
         private Task? _worker;
 
         private WireViewPro2Device? _device;
-        private int _pollMs = 200;
+        private int _pollMs = 1000;
 
         public event EventHandler<bool>? ConnectionChanged; // true=connected
         public event EventHandler<DeviceData>? DataUpdated;
