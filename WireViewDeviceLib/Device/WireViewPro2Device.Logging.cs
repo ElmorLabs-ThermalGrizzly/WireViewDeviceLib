@@ -55,6 +55,24 @@ public partial class WireViewPro2Device
 
     }
 
+    private byte[]? SpiFlashReadPageNoLock(uint addr, uint len)
+    {
+        if (!Connected || _port == null) throw new InvalidOperationException("Device not connected.");
+        if (len == 0) return Array.Empty<byte>();
+        if (len > SpiFlashMaxReadLen) len = SpiFlashMaxReadLen;
+
+        var frame = new byte[1 + 4 + 4];
+        frame[0] = CmdSpiFlashReadPage;
+        BinaryPrimitives.WriteUInt32LittleEndian(frame.AsSpan(1, 4), addr);
+        BinaryPrimitives.WriteUInt32LittleEndian(frame.AsSpan(5, 4), len);
+
+        byte[]? rx = null;
+        _port!.Write(frame, 0, frame.Length);
+        rx = ReadExact((int)len);
+        return rx;
+
+    }
+
     /// <summary>
     /// Reads exactly <paramref name="len"/> bytes from SPI flash starting at <paramref name="addr"/>.
     /// Internally performs multiple page reads (<= 256 bytes each).
@@ -68,40 +86,40 @@ public partial class WireViewPro2Device
         if (!Connected || _port == null) throw new InvalidOperationException("Device not connected.");
         if (len == 0) return Array.Empty<byte>();
 
-        // Disable UI updates
-        lock (_port) {
-            _port!.Open();
-            _port!.DiscardInBuffer();
-            _port!.Write(new byte[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)SCREEN_CMD.SCREEN_PAUSE_UPDATES }, 0, 2);
-            _port!.Close();
-        }
-
-        var result = new byte[len];
-        uint read = 0;
-
-        while (read < len)
+        return await Task.Run(() =>
         {
             ct.ThrowIfCancellationRequested();
+            var result = new byte[len];
+            uint read = 0;
 
-            uint remaining = len - read;
-            uint toRead = (uint)Math.Min(SpiFlashMaxReadLen, remaining);
+            // Disable UI updates
+            lock (_port) {
+                _port!.Open();
+                _port!.DiscardInBuffer();
+                _port!.Write(new byte[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)SCREEN_CMD.SCREEN_PAUSE_UPDATES }, 0, 2);
 
-            var chunk = await SpiFlashReadPageAsync(addr + read, toRead, ct).ConfigureAwait(false);
+
+                while (read < len)
+                {
+                    uint remaining = len - read;
+                    uint toRead = (uint)Math.Min(SpiFlashMaxReadLen, remaining);
+
+                    var chunk = SpiFlashReadPageNoLock(addr + read, toRead);
             
-            Buffer.BlockCopy(chunk, 0, result, (int)read, (int)toRead);
+                    Buffer.BlockCopy(chunk, 0, result, (int)read, (int)toRead);
 
-            read += toRead;
-            progress?.Report((double)read / len);
-        }
+                    read += toRead;
+                    progress?.Report((double)read / len);
+                }
 
-        // Enable UI updates
-        lock (_port) {
-            _port!.Open();
-            _port!.Write(new byte[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)SCREEN_CMD.SCREEN_RESUME_UPDATES }, 0, 2);
-            _port!.Close();
-        }
+                // Enable UI updates
+                _port!.Write(new byte[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)SCREEN_CMD.SCREEN_RESUME_UPDATES }, 0, 2);
+                _port!.Close();
+            }
 
-        return result;
+            return result;
+
+        }, ct).ConfigureAwait(false);
     }
 
     public async Task<byte[]> ReadDeviceLogAsync(
