@@ -22,7 +22,7 @@ public partial class WireViewPro2Device
     // Firmware: CMD_SPI_FLASH_READ_PAGE expects payload: [cmd][addr:4][len:4] and returns len bytes.
     private async Task<byte[]> SpiFlashReadPageAsync(uint addr, uint len, CancellationToken ct)
     {
-        if (!Connected) throw new InvalidOperationException("Device not connected.");
+        if (!Connected || _port == null) throw new InvalidOperationException("Device not connected.");
         if (len == 0) return Array.Empty<byte>();
         if (len > SpiFlashMaxReadLen) len = SpiFlashMaxReadLen;
 
@@ -31,25 +31,28 @@ public partial class WireViewPro2Device
         BinaryPrimitives.WriteUInt32LittleEndian(frame.AsSpan(1, 4), addr);
         BinaryPrimitives.WriteUInt32LittleEndian(frame.AsSpan(5, 4), len);
 
-        return await Task.Run(() =>
+
+        byte[] result = await Task.Run(() =>
         {
             ct.ThrowIfCancellationRequested();
 
-            _port!.Open();
-            _port!.DiscardInBuffer();
-            _port!.Write(frame, 0, frame.Length);
-
-            var rx = ReadExact((int)len);
-
-            // Enable UI updates
-            _port!.Write(new byte[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)SCREEN_CMD.SCREEN_RESUME_UPDATES }, 0, 2);
-            _port!.Close();
+            byte[]? rx = null;
+            lock (_port)
+            {
+                _port!.Open();
+                _port!.Write(frame, 0, frame.Length);
+                rx = ReadExact((int)len);
+                _port!.Close();
+            }
 
             if (rx is null)
                 throw new TimeoutException("SPI flash read timed out.");
 
             return Task.FromResult(rx);
         }, ct).ConfigureAwait(false);
+
+        return result;
+
     }
 
     /// <summary>
@@ -62,8 +65,16 @@ public partial class WireViewPro2Device
         IProgress<double>? progress,
         CancellationToken ct)
     {
-        if (!Connected) throw new InvalidOperationException("Device not connected.");
+        if (!Connected || _port == null) throw new InvalidOperationException("Device not connected.");
         if (len == 0) return Array.Empty<byte>();
+
+        // Disable UI updates
+        lock (_port) {
+            _port!.Open();
+            _port!.DiscardInBuffer();
+            _port!.Write(new byte[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)SCREEN_CMD.SCREEN_PAUSE_UPDATES }, 0, 2);
+            _port!.Close();
+        }
 
         var result = new byte[len];
         uint read = 0;
@@ -76,10 +87,18 @@ public partial class WireViewPro2Device
             uint toRead = (uint)Math.Min(SpiFlashMaxReadLen, remaining);
 
             var chunk = await SpiFlashReadPageAsync(addr + read, toRead, ct).ConfigureAwait(false);
+            
             Buffer.BlockCopy(chunk, 0, result, (int)read, (int)toRead);
 
             read += toRead;
             progress?.Report((double)read / len);
+        }
+
+        // Enable UI updates
+        lock (_port) {
+            _port!.Open();
+            _port!.Write(new byte[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)SCREEN_CMD.SCREEN_RESUME_UPDATES }, 0, 2);
+            _port!.Close();
         }
 
         return result;
@@ -89,9 +108,6 @@ public partial class WireViewPro2Device
         IProgress<double>? progress = null,
         CancellationToken ct = default)
     {
-        _port!.Open();
-        _port!.Write(new byte[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)SCREEN_CMD.SCREEN_PAUSE_UPDATES }, 0, 2);
-        _port!.Close();
 
         try
         {
@@ -108,9 +124,6 @@ public partial class WireViewPro2Device
         }
         finally
         {
-            _port!.Open();
-            _port!.Write(new byte[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)SCREEN_CMD.SCREEN_RESUME_UPDATES }, 0, 2);
-            _port!.Close();
             progress?.Report(1.0);
         }
     }
@@ -119,10 +132,6 @@ public partial class WireViewPro2Device
         IProgress<double>? progress = null,
         CancellationToken ct = default)
     {
-        _port!.Open();
-        _port!.Write(new byte[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)SCREEN_CMD.SCREEN_PAUSE_UPDATES }, 0, 2);
-        _port!.Close();
-
         try
         {
             uint len = DataloggerEndAddr - DataloggerStartAddr;
@@ -139,9 +148,6 @@ public partial class WireViewPro2Device
         }
         finally
         {
-            _port!.Open();
-            _port!.Write(new byte[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)SCREEN_CMD.SCREEN_RESUME_UPDATES }, 0, 2);
-            _port!.Close();
             progress?.Report(1.0);
         }
     }

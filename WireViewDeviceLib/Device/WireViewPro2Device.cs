@@ -99,9 +99,6 @@ namespace WireView2.Device
 
                 Connected = true;
                 ConnectionChanged?.Invoke(this, true);
-
-                _cts = new CancellationTokenSource();
-                _worker = Task.Run(() => PollLoop(_cts.Token));
             }
             else
             {
@@ -109,6 +106,12 @@ namespace WireView2.Device
             }
             _port.RtsEnable = false;
             _port.Close();
+
+            if(Connected)
+            {
+                _cts = new CancellationTokenSource();
+                _worker = Task.Run(() => PollLoop(_cts.Token));
+            }
         }
 
         public void Disconnect()
@@ -133,15 +136,19 @@ namespace WireView2.Device
 
         public string? ReadBuildString()
         {
-            if (!Connected) return null;
-
-            _port!.Open();
-            _port!.DiscardInBuffer();
-            _port.Write(new byte[] { (byte)UsbCmd.CMD_READ_BUILD_INFO }, 0, 1);
+            if (!Connected || _port == null) return null;
 
             var size = Marshal.SizeOf<BuildStruct>();
-            var buf = ReadExact(size);
-            _port!.Close();
+            byte[]? buf = null;
+
+            lock (_port) { 
+                _port!.Open();
+                _port!.DiscardInBuffer();
+                _port.Write(new byte[] { (byte)UsbCmd.CMD_READ_BUILD_INFO }, 0, 1);
+
+                buf = ReadExact(size);
+                _port!.Close();
+            }
 
             if (buf == null) return null;
             BuildStruct buildStruct = BytesToStruct<BuildStruct>(buf);
@@ -151,15 +158,19 @@ namespace WireView2.Device
 
         public Task EnterBootloaderAsync()
         {
-            if (!Connected) return Task.CompletedTask;
+            if (!Connected || _port == null) return Task.CompletedTask;
 
             return Task.Run(() =>
             {
                 try
                 {
-                    _port!.Open();
-                    _port!.DiscardInBuffer();
-                    _port.Write(new byte[] { (byte)UsbCmd.CMD_BOOTLOADER }, 0, 1);
+                    lock (_port)
+                    {
+                        _port!.Open();
+                        _port!.DiscardInBuffer();
+                        _port.Write(new byte[] { (byte)UsbCmd.CMD_BOOTLOADER }, 0, 1);
+                        _port!.Close();
+                    }
                     Thread.Sleep(50);
                 }
                 catch
@@ -167,22 +178,27 @@ namespace WireView2.Device
                 }
                 finally
                 {
-                    try { _port!.Close();  Disconnect(); } catch { }
+                    try { Disconnect(); } catch { }
                 }
             });
         }
 
         public DeviceConfigStruct? ReadConfig()
         {
-            if (!Connected) return null;
-
-            _port!.Open();
-            _port!.DiscardInBuffer();
-            _port.Write(new byte[] { (byte)UsbCmd.CMD_READ_CONFIG }, 0, 1);
+            if (!Connected || _port == null) return null;
 
             var size = Marshal.SizeOf<DeviceConfigStruct>();
-            var buf = ReadExact(size);
-            _port!.Close();
+            byte[]? buf = null;
+
+            lock (_port)
+            {
+                _port!.Open();
+                _port!.DiscardInBuffer();
+                _port.Write(new byte[] { (byte)UsbCmd.CMD_READ_CONFIG }, 0, 1);
+
+                buf = ReadExact(size);
+                _port!.Close();
+            }
 
             if (buf == null) return null;
             return BytesToStruct<DeviceConfigStruct>(buf);
@@ -190,56 +206,70 @@ namespace WireView2.Device
 
         public void WriteConfig(DeviceConfigStruct config)
         {
-            if (!Connected) return;
+            if (!Connected || _port == null) return;
 
             var payload = StructToBytes(config);
 
             var frame = new byte[64];
             frame[0] = (byte)UsbCmd.CMD_WRITE_CONFIG;
 
-            _port!.Open();
-            _port!.DiscardInBuffer();
-
-            const int maxPayloadPerFrame = 62;
-
-            for (int offset = 0; offset < payload.Length; offset += maxPayloadPerFrame)
+            lock (_port)
             {
-                int bytesToWrite = Math.Min(maxPayloadPerFrame, payload.Length - offset);
+                _port!.Open();
+                _port!.DiscardInBuffer();
 
-                frame[1] = (byte)offset;
-                Buffer.BlockCopy(payload, offset, frame, 2, bytesToWrite);
+                const int maxPayloadPerFrame = 62;
 
-                _port!.Write(frame, 0, bytesToWrite + 2);
+                for (int offset = 0; offset < payload.Length; offset += maxPayloadPerFrame)
+                {
+                    int bytesToWrite = Math.Min(maxPayloadPerFrame, payload.Length - offset);
+
+                    frame[1] = (byte)offset;
+                    Buffer.BlockCopy(payload, offset, frame, 2, bytesToWrite);
+
+                    _port!.Write(frame, 0, bytesToWrite + 2);
+                }
+                _port!.Close();
             }
-            _port!.Close();
         }
 
         public void NvmCmd(NVM_CMD cmd)
         {
-            if (!Connected) return;
-            _port!.Open();
-            _port!.DiscardInBuffer();
-            _port!.Write(new[] { (byte)UsbCmd.CMD_NVM_CONFIG, (byte)0x55, (byte)0xAA, (byte)0x55, (byte)0xAA, (byte)cmd }, 0, 6);
-            _port.Close();
+            if (!Connected || _port == null) return;
+
+            lock (_port)
+            {
+                _port!.Open();
+                _port!.DiscardInBuffer();
+                _port!.Write(new[] { (byte)UsbCmd.CMD_NVM_CONFIG, (byte)0x55, (byte)0xAA, (byte)0x55, (byte)0xAA, (byte)cmd }, 0, 6);
+                _port!.Close();
+            }
         }
 
         public void ScreenCmd(SCREEN_CMD cmd)
         {
-            if (!Connected) return;
+            if (!Connected || _port == null) return;
 
-            _port!.Open();
-            _port!.DiscardInBuffer();
-            _port!.Write(new[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)cmd }, 0, 2);
-            _port!.Close();
+            lock (_port)
+            {
+                _port!.Open();
+                _port!.DiscardInBuffer();
+                _port!.Write(new[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)cmd }, 0, 2);
+                _port!.Close();
+            }
         }
 
         public void ClearFaults(int faultStatusMask = 0xFFFF, int faultLogMask = 0xFFFF)
         {
-            if (!Connected) return;
-            _port!.Open();
-            _port!.DiscardInBuffer();
-            _port!.Write(new[] { (byte)UsbCmd.CMD_CLEAR_FAULTS, (byte)(faultStatusMask & 0xFF), (byte)((faultStatusMask >> 8) & 0xFF), (byte)(faultLogMask & 0xFF), (byte)((faultLogMask >> 8) & 0xFF) }, 0, 5);
-            _port!.Close();
+            if (!Connected || _port == null) return;
+
+            lock (_port)
+            {
+                _port!.Open();
+                _port!.DiscardInBuffer();
+                _port!.Write(new[] { (byte)UsbCmd.CMD_CLEAR_FAULTS, (byte)(faultStatusMask & 0xFF), (byte)((faultStatusMask >> 8) & 0xFF), (byte)(faultLogMask & 0xFF), (byte)((faultLogMask >> 8) & 0xFF) }, 0, 5);
+                _port!.Close();
+            }
         }
 
         private void PollLoop(CancellationToken ct)
@@ -265,19 +295,26 @@ namespace WireView2.Device
 
         private bool ReadWelcomeMessage(bool sendCmd = false)
         {
-            _port!.Open();
-            _port!.RtsEnable = true;
-
-            if (sendCmd)
-            {
-                _port!.DiscardInBuffer();
-                _port!.Write(new byte[] { (byte)UsbCmd.CMD_WELCOME }, 0, 1);
-            }
+            if (_port == null) return false;
 
             var size = WelcomeMessage.Length + 1;
-            var buf = ReadExact(size);
-            _port!.Close();
-            _port.RtsEnable = false;
+
+            byte[]? buf = null;
+            lock (_port)
+            {
+                _port!.Open();
+                _port!.RtsEnable = true;
+
+                if (sendCmd)
+                {
+                    _port!.DiscardInBuffer();
+                    _port!.Write(new byte[] { (byte)UsbCmd.CMD_WELCOME }, 0, 1);
+                }
+
+                buf = ReadExact(size);
+                _port.RtsEnable = false;
+                _port!.Close();
+            }
 
             if (buf == null) return false;
             return System.Text.Encoding.ASCII.GetString(buf, 0, size).TrimEnd('\0').CompareTo(WelcomeMessage) == 0;
@@ -285,13 +322,18 @@ namespace WireView2.Device
 
         private VendorDataStruct? ReadVendorData()
         {
-            _port!.Open();
-            _port!.DiscardInBuffer();
-            _port!.Write(new byte[] { (byte)UsbCmd.CMD_READ_VENDOR_DATA }, 0, 1);
+            if (_port == null) return null;
 
             var size = Marshal.SizeOf<VendorDataStruct>();
-            var buf = ReadExact(size);
-            _port!.Close();
+            byte[]? buf;
+            lock (_port)
+            {
+                _port!.Open();
+                _port!.DiscardInBuffer();
+                _port!.Write(new byte[] { (byte)UsbCmd.CMD_READ_VENDOR_DATA }, 0, 1);
+                buf = ReadExact(size);
+                _port!.Close();
+            }
 
             if (buf == null) return null;
             return BytesToStruct<VendorDataStruct>(buf);
@@ -299,14 +341,19 @@ namespace WireView2.Device
 
         private string? ReadUid()
         {
-            _port!.Open();
-            _port!.DiscardInBuffer();
-            _port!.Write(new byte[] { (byte)UsbCmd.CMD_READ_UID }, 0, 1);
+            if (_port == null) return null;
 
             const int uidBytes = 12;
-            var buf = ReadExact(uidBytes);
+            byte[]? buf = null;
 
-            _port!.Close();
+            lock (_port)
+            {
+                _port!.Open();
+                _port!.DiscardInBuffer();
+                _port!.Write(new byte[] { (byte)UsbCmd.CMD_READ_UID }, 0, 1);
+                buf = ReadExact(uidBytes);
+                _port!.Close();
+            }
 
             if (buf == null) return null;
             return BitConverter.ToString(buf).Replace("-", string.Empty);
@@ -314,14 +361,19 @@ namespace WireView2.Device
 
         private SensorStruct? ReadSensorValues()
         {
-            _port!.Open();
-            _port!.DiscardInBuffer();
-            _port!.Write(new byte[] { (byte)UsbCmd.CMD_READ_SENSOR_VALUES }, 0, 1);
+            if(_port == null) return null;
 
             var size = Marshal.SizeOf<SensorStruct>();
-            var buf = ReadExact(size);
 
-            _port.Close();
+            byte[]? buf = null;
+            lock (_port)
+            {
+                _port!.Open();
+                _port!.DiscardInBuffer();
+                _port!.Write(new byte[] { (byte)UsbCmd.CMD_READ_SENSOR_VALUES }, 0, 1);
+                buf = ReadExact(size);
+                _port.Close();
+            }
 
             if (buf == null) return null;
             return BytesToStruct<SensorStruct>(buf);

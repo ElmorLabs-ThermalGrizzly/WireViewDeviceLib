@@ -50,30 +50,34 @@ namespace WireView2.Device
         {
             try
             {
-                _mutex.WaitOne(MutexTimeout);
-                hasMutex = true;
+                if (_mutex.WaitOne(MutexTimeout))
+                {
+                    hasMutex = true;
+                    base.Open();
+                }
             }
             catch (AbandonedMutexException)
             {
                 // Another process terminated without releasing the mutex.
                 // We can still acquire it, so just proceed.
-                //base.Open();
-                _mutex.ReleaseMutex();
+                hasMutex = true;
+                base.Open();
             }
-            if(hasMutex) base.Open();
         }
 
         public new void Close()
         {
             if (hasMutex)
             {
-
-                BaseStream.Flush();
-                BaseStream.Close();
+                if (IsOpen)
+                {
+                    BaseStream.Flush();
+                    BaseStream.Close();
+                }
                 try
                 {
-                    hasMutex = false;
                     _mutex.ReleaseMutex();
+                    hasMutex = false;
                 }
                 catch { }
             }
@@ -96,5 +100,38 @@ namespace WireView2.Device
             }
         }
 
+        public new void Write(byte[] buffer, int offset, int count)
+        {
+            if (hasMutex)
+            {
+                base.Write(buffer, offset, count);
+            }
+        }
+
+        public new int Read(byte[] buffer, int offset, int count)
+        {
+            if (hasMutex)
+            {
+                return base.Read(buffer, offset, count);
+            }
+            return 0;
+        }
+
+        public new void DiscardInBuffer()
+        {
+            if (hasMutex)
+            {
+                base.DiscardInBuffer();
+            }
+        }
+
+        public new void DiscardOutBuffer()
+        {
+            if (hasMutex)
+            {
+                base.DiscardOutBuffer();
+            }
+
+        }
     }
 }
