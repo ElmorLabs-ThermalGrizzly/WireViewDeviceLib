@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Diagnostics;
 using System.IO.Ports;
 using System.Numerics;
 using System.Threading;
@@ -62,6 +63,9 @@ namespace WireView2.Device
                 // We can still acquire it, so just proceed.
                 hasMutex = true;
                 base.Open();
+            } catch(Exception ex)
+            {
+                Debug.WriteLine($"[{DateTime.Now.ToString("mm:ss.fff")}] SharedSerialPort.Open: {ex.Message}");
             }
         }
 
@@ -79,7 +83,9 @@ namespace WireView2.Device
                     _mutex.ReleaseMutex();
                     hasMutex = false;
                 }
-                catch { }
+                catch(Exception ex) {
+                    Debug.WriteLine($"[{DateTime.Now.ToString("mm:ss.fff")}] SharedSerialPort.Close: {ex.Message}");
+                }
             }
         }
 
