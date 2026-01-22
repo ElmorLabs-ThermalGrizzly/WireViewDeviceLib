@@ -92,20 +92,31 @@ public partial class WireViewPro2Device
             var result = new byte[len];
             uint read = 0;
 
+            var frame = new byte[1 + 4 + 4];
+            frame[0] = CmdSpiFlashReadPage;
+            byte[]? rx = null;
+
             // Disable UI updates
             lock (_port) {
                 _port!.Open();
                 _port!.DiscardInBuffer();
                 _port!.Write(new byte[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)SCREEN_CMD.SCREEN_PAUSE_UPDATES }, 0, 2);
 
-
                 while (read < len)
                 {
                     uint remaining = len - read;
                     uint toRead = (uint)Math.Min(SpiFlashMaxReadLen, remaining);
 
-                    var chunk = SpiFlashReadPageNoLock(addr + read, toRead);
-            
+                    //var chunk = SpiFlashReadPageNoLock(addr + read, toRead);
+                    BinaryPrimitives.WriteUInt32LittleEndian(frame.AsSpan(1, 4), addr + read);
+                    BinaryPrimitives.WriteUInt32LittleEndian(frame.AsSpan(5, 4), toRead);
+
+                    _port!.Write(frame, 0, frame.Length);
+                    var chunk = ReadExact((int)toRead);
+
+                    if (chunk is null || chunk.Length != toRead)
+                        throw new TimeoutException("SPI flash read error.");
+
                     Buffer.BlockCopy(chunk, 0, result, (int)read, (int)toRead);
 
                     read += toRead;
@@ -146,7 +157,7 @@ public partial class WireViewPro2Device
         }
     }
 
-    public async Task<IReadOnlyList<DeviceData>> ReadHistoryFromSpiFlashAsync(
+    public async Task<IReadOnlyList<DATALOGGER_Entry>> ReadHistoryFromSpiFlashAsync(
         IProgress<double>? progress = null,
         CancellationToken ct = default)
     {
