@@ -157,7 +157,7 @@ public partial class WireViewPro2Device
         }
     }
 
-    public async Task<IReadOnlyList<DATALOGGER_Entry>> ReadHistoryFromSpiFlashAsync(
+    public async Task<IReadOnlyList<DeviceLogParser.DATALOGGER_Entry>> ReadHistoryFromSpiFlashAsync(
         IProgress<double>? progress = null,
         CancellationToken ct = default)
     {
