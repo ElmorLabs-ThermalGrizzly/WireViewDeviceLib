@@ -53,18 +53,20 @@ namespace WireView2.Device
             {
                 if (_mutex.WaitOne(MutexTimeout))
                 {
-                    hasMutex = true;
                     base.Open();
+                    hasMutex = true;
                 }
             }
             catch (AbandonedMutexException)
             {
                 // Another process terminated without releasing the mutex.
                 // We can still acquire it, so just proceed.
-                hasMutex = true;
                 base.Open();
+                hasMutex = true;
             } catch(Exception ex)
             {
+                _mutex.ReleaseMutex();
+                hasMutex = false;
                 Debug.WriteLine($"[{DateTime.Now.ToString("mm:ss.fff")}] SharedSerialPort.Open: {ex.Message}");
             }
         }
@@ -78,10 +80,9 @@ namespace WireView2.Device
                     BaseStream.Flush();
                     BaseStream.Close();
                 }
-                try
-                {
-                    _mutex.ReleaseMutex();
+                try { 
                     hasMutex = false;
+                    _mutex.ReleaseMutex();
                 }
                 catch(Exception ex) {
                     Debug.WriteLine($"[{DateTime.Now.ToString("mm:ss.fff")}] SharedSerialPort.Close: {ex.Message}");
