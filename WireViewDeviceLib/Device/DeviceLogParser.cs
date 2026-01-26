@@ -12,7 +12,7 @@ public static class DeviceLogParser
     {
         ENTRY_TYPE_MCU_TICK = 0x00,
         ENTRY_TYPE_SYSTEM_TIME = 0x01,
-        ENTRY_TYPE_RESERVED = 0x02,
+        ENTRY_TYPE_POWER_ON = 0x02,
         ENTRY_TYPE_EMPTY = 0x03
     }
 
@@ -47,14 +47,12 @@ public static class DeviceLogParser
         if (data.Length < EntrySizeBytes)
             return results;
 
-        bool haveMcuBase = false;
         uint lastMcuTick30 = 0;
-        DateTime mcuBaseUtc = DateTime.UtcNow;
+        DateTime mcuBaseUtc = DateTime.Parse("2026-01-01 00:00");
 
         bool firstEntryFound = false;
         int emptyCount = 0;
 
-        
         for (int offset = 0; offset + EntrySizeBytes <= data.Length;)
         {
             var entry = data.Slice(offset, EntrySizeBytes).ToArray();
@@ -73,7 +71,7 @@ public static class DeviceLogParser
             }
 
             // Ignore entries explicitly marked empty/reserved
-            if (type is ENTRY_TYPE.ENTRY_TYPE_EMPTY or ENTRY_TYPE.ENTRY_TYPE_RESERVED)
+            if (type is ENTRY_TYPE.ENTRY_TYPE_EMPTY)
             {
                 offset++;
                 if (firstEntryFound)
@@ -87,17 +85,16 @@ public static class DeviceLogParser
                 continue;
             }
 
-            DateTime timestampUtc;
             switch (type)
             {
                 case ENTRY_TYPE.ENTRY_TYPE_SYSTEM_TIME:
-                    // Timestamp is seconds since epoch
-                    //timestampUtc = DateTime.UnixEpoch.AddSeconds(ts30);
-                    // Also reset MCU base so subsequent MCU ticks don't "jump back" unexpectedly
-                    //haveMcuBase = false;
                     offset++;
                     continue;
-                    break;
+
+                case ENTRY_TYPE.ENTRY_TYPE_POWER_ON:
+
+                    mcuBaseUtc.AddDays(1);
+                    continue;
 
                 case ENTRY_TYPE.ENTRY_TYPE_MCU_TICK:
                 default:
@@ -109,13 +106,10 @@ public static class DeviceLogParser
                         continue;
                     }
 
-                    // Timestamp is MCU tick in units of 4ms, stored as 30-bit counter.
-                    // We keep a rolling base and advance by delta ticks.
-                    if (!haveMcuBase)
+                    // if timestamp is less than previous value, treat as power on
+                    if (ts30 < lastMcuTick30)
                     {
-                        lastMcuTick30 = ts30;
-                        mcuBaseUtc = DateTime.MinValue;
-                        haveMcuBase = true;
+                        mcuBaseUtc.AddDays(1);
                     }
 
                     // 30-bit wrap-safe delta
@@ -124,7 +118,6 @@ public static class DeviceLogParser
 
                     // Each tick = 4ms
                     mcuBaseUtc = mcuBaseUtc.AddMilliseconds(deltaTicks * 4.0);
-                    timestampUtc = mcuBaseUtc;
                     break;
             }
 
