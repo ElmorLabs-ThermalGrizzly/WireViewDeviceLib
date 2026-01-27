@@ -101,6 +101,9 @@ namespace WireView2.Device
 
                 UniqueId = ReadUid() ?? string.Empty;
 
+                // Enable display updates just in case
+                ScreenCmd(SCREEN_CMD.SCREEN_RESUME_UPDATES);
+
                 Connected = true;
                 ConnectionChanged?.Invoke(this, true);
             }
