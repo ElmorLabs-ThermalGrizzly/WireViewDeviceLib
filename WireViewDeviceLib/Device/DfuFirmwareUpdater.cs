@@ -188,6 +188,12 @@ namespace WireView2.Device
 
             private static bool IsPresent(ushort vid, ushort pid)
             {
+
+                if(!System.OperatingSystem.IsWindows())
+                {
+                    return false;
+                }
+
                 var needle = $"VID_{vid:X4}&PID_{pid:X4}";
                 try
                 {

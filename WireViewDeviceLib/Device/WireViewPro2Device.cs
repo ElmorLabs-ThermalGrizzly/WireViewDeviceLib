@@ -1,10 +1,6 @@
 ﻿using System;
 using System.IO.Ports;
 using System.Runtime.InteropServices;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Collections.Generic;
-using System.Linq;
 using System.Management;
 
 namespace WireView2.Device
@@ -18,25 +14,33 @@ namespace WireView2.Device
         {
             var ports = new List<string>();
 
-            using var searcher = new ManagementObjectSearcher(
-                "SELECT * FROM Win32_PnPEntity WHERE Name LIKE '%(COM%)%'");
-
-            foreach (var obj in searcher.Get().Cast<ManagementObject>())
+            if (System.OperatingSystem.IsWindows())
             {
-                var pnpId = obj["PNPDeviceID"] as string ?? string.Empty;
-                if (pnpId.StartsWith(@"USB\VID_0483&PID_5740", StringComparison.OrdinalIgnoreCase))
-                {
-                    var name = obj["Name"] as string;
-                    if (name == null) continue;
+                using var searcher = new ManagementObjectSearcher(
+                    "SELECT * FROM Win32_PnPEntity WHERE Name LIKE '%(COM%)%'");
 
-                    var start = name.LastIndexOf("(COM", StringComparison.OrdinalIgnoreCase);
-                    var end = name.LastIndexOf(')');
-                    if (start >= 0 && end > start)
+                foreach (var obj in searcher.Get().Cast<ManagementObject>())
+                {
+                    var pnpId = obj["PNPDeviceID"] as string ?? string.Empty;
+                    if (pnpId.StartsWith(@"USB\VID_0483&PID_5740", StringComparison.OrdinalIgnoreCase))
                     {
-                        var comPort = name.Substring(start + 1, end - start - 1);
-                        ports.Add(comPort);
+                        var name = obj["Name"] as string;
+                        if (name == null) continue;
+
+                        var start = name.LastIndexOf("(COM", StringComparison.OrdinalIgnoreCase);
+                        var end = name.LastIndexOf(')');
+                        if (start >= 0 && end > start)
+                        {
+                            var comPort = name.Substring(start + 1, end - start - 1);
+                            ports.Add(comPort);
+                        }
                     }
                 }
+            }
+            else
+            {
+                // For non-Windows systems, we can implement other methods if needed
+                // For now, return empty list
             }
 
             return ports;

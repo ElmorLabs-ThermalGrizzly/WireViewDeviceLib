@@ -8,7 +8,7 @@ public static class DeviceLogParser
     private const int SENSOR_POWER_NUM = 6;
     private const int SENSOR_TS_NUM = 4;
 
-    private enum ENTRY_TYPE : byte
+    public enum ENTRY_TYPE : byte
     {
         ENTRY_TYPE_MCU_TICK = 0x00,
         ENTRY_TYPE_SYSTEM_TIME = 0x01,
@@ -36,8 +36,8 @@ public static class DeviceLogParser
     }
 
     // Decode helpers for the union bitfields
-    private static ENTRY_TYPE DecodeType(uint data) => (ENTRY_TYPE)(data & 0b11u);
-    private static uint DecodeTimestamp30(uint data) => (data >> 2) & 0x3FFF_FFFFu;
+    public static ENTRY_TYPE DecodeType(uint data) => (ENTRY_TYPE)(data & 0b11u);
+    public static uint DecodeTimestamp30(uint data) => (data >> 2) & 0x3FFF_FFFFu;
 
     public static IReadOnlyList<DATALOGGER_Entry> Parse(ReadOnlySpan<byte> data)
     {
@@ -46,9 +46,6 @@ public static class DeviceLogParser
         var results = new List<DATALOGGER_Entry>(capacity: Math.Max(1024, data.Length / EntrySizeBytes));
         if (data.Length < EntrySizeBytes)
             return results;
-
-        uint lastMcuTick30 = 0;
-        DateTime mcuBaseUtc = DateTime.Parse("2026-01-01 00:00");
 
         bool firstEntryFound = false;
         int emptyCount = 0;
@@ -87,42 +84,37 @@ public static class DeviceLogParser
 
             switch (type)
             {
+                default:
                 case ENTRY_TYPE.ENTRY_TYPE_SYSTEM_TIME:
-                    offset++;
+                    // Not implemented yet, go to next entry
+                    offset += EntrySizeBytes;
                     continue;
 
                 case ENTRY_TYPE.ENTRY_TYPE_POWER_ON:
 
-                    mcuBaseUtc.AddDays(1);
-                    continue;
+                    break;
 
                 case ENTRY_TYPE.ENTRY_TYPE_MCU_TICK:
-                default:
 
                     // If timestamp is 0, skip entry
-                    if (ts30 == 0)
+                    /*if (ts30 == 0)
                     {
                         offset += EntrySizeBytes;
                         continue;
-                    }
+                    }*/
 
-                    // if timestamp is less than previous value, treat as power on
-                    if (ts30 < lastMcuTick30)
-                    {
-                        mcuBaseUtc.AddDays(1);
-                    }
-
-                    // 30-bit wrap-safe delta
-                    uint deltaTicks = (ts30 - lastMcuTick30) & 0x3FFF_FFFFu;
-                    lastMcuTick30 = ts30;
-
-                    // Each tick = 4ms
-                    mcuBaseUtc = mcuBaseUtc.AddMilliseconds(deltaTicks * 4.0);
                     break;
             }
 
             // Parse struct from bytes
             DATALOGGER_Entry entryStruct = WireViewPro2Device.BytesToStruct<DATALOGGER_Entry>(entry);
+
+            if(entryStruct.HpwrSense > 3)
+            {
+                // Invalid value, skip entry
+                offset += EntrySizeBytes;
+                continue;
+            }
 
             results.Add(entryStruct);
             firstEntryFound = true;
