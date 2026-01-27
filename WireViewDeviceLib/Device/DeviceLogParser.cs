@@ -8,6 +8,10 @@ public static class DeviceLogParser
     private const int SENSOR_POWER_NUM = 6;
     private const int SENSOR_TS_NUM = 4;
 
+    // Flash layout assumptions (matches firmware)
+    private const int SpiFlashSectorSizeBytes = 4096; // 4KB
+    private const int SpiFlashPageSizeBytes = 256;    // page read size / alignment
+
     public enum ENTRY_TYPE : byte
     {
         ENTRY_TYPE_MCU_TICK = 0x00,
@@ -41,84 +45,102 @@ public static class DeviceLogParser
 
     public static IReadOnlyList<DATALOGGER_Entry> Parse(ReadOnlySpan<byte> data)
     {
-        int EntrySizeBytes = Marshal.SizeOf<DATALOGGER_Entry>();
+        int entrySizeBytes = Marshal.SizeOf<DATALOGGER_Entry>();
+        if (entrySizeBytes <= 0)
+            return Array.Empty<DATALOGGER_Entry>();
 
-        var results = new List<DATALOGGER_Entry>(capacity: Math.Max(1024, data.Length / EntrySizeBytes));
-        if (data.Length < EntrySizeBytes)
+        var results = new List<DATALOGGER_Entry>(capacity: Math.Max(1024, data.Length / entrySizeBytes));
+        if (data.Length < entrySizeBytes)
             return results;
+
+        int entriesPerSector = SpiFlashSectorSizeBytes / entrySizeBytes;
+        if (entriesPerSector <= 0)
+            return results;
+
+        int totalSectors = data.Length / SpiFlashSectorSizeBytes;
+        int parseBytes = totalSectors * SpiFlashSectorSizeBytes;
 
         bool firstEntryFound = false;
         int emptyCount = 0;
 
-        for (int offset = 0; offset + EntrySizeBytes <= data.Length;)
+        for (int sector = 0; sector < totalSectors; sector++)
         {
-            var entry = data.Slice(offset, EntrySizeBytes).ToArray();
-            uint rawData = ReadU32LE(entry, 0);
-            var type = DecodeType(rawData);
-            uint ts30 = DecodeTimestamp30(rawData);
+            int sectorBase = sector * SpiFlashSectorSizeBytes;
 
-            // If near page end, go to next page and skip nearby entries
-
-            if (firstEntryFound && (offset & 0xFF) > (256 - EntrySizeBytes))
+            for (int index = 0; index < entriesPerSector;)
             {
-                int remainingInPage = 256 - (offset & 0xFF);
-                int skipBytesInNextPage = EntrySizeBytes - remainingInPage;
-                offset += remainingInPage + skipBytesInNextPage;
-                continue;
-            }
+                int offset = sectorBase + (index * entrySizeBytes);
+                if (offset + entrySizeBytes > parseBytes)
+                    break;
 
-            // Ignore entries explicitly marked empty/reserved
-            if (type is ENTRY_TYPE.ENTRY_TYPE_EMPTY)
-            {
-                offset++;
-                if (firstEntryFound)
+                // Re-add: if near page end, jump to next page and align so we start at the next full entry.
+                // This mirrors the old heuristic used to avoid decoding entries spanning 256B boundaries
+                // (common when reads are performed in page-sized chunks).
+                if (firstEntryFound && (offset & (SpiFlashPageSizeBytes - 1)) > (SpiFlashPageSizeBytes - entrySizeBytes))
                 {
-                    emptyCount++;
-                    if (emptyCount >= 32)
-                    {
-                        break; // Stop parsing after 32 consecutive empty entries once we've found data
-                    }
-                }
-                continue;
-            }
+                    int remainingInPage = SpiFlashPageSizeBytes - (offset & (SpiFlashPageSizeBytes - 1));
+                    offset += remainingInPage; // go to next page boundary
 
-            switch (type)
-            {
-                default:
-                case ENTRY_TYPE.ENTRY_TYPE_SYSTEM_TIME:
-                    // Not implemented yet, go to next entry
-                    offset += EntrySizeBytes;
+                    int entryMisalign = offset % entrySizeBytes;
+                    if (entryMisalign != 0)
+                        offset += entrySizeBytes - entryMisalign;
+
+                    // Convert the new offset back into a sector-local index (keep firmware-style Sector/Index iteration)
+                    int newIndex = (offset - sectorBase) / entrySizeBytes;
+                    if (newIndex <= index)
+                        newIndex = index + 1; // safety: always make progress
+
+                    index = newIndex;
                     continue;
+                }
 
-                case ENTRY_TYPE.ENTRY_TYPE_POWER_ON:
+                ReadOnlySpan<byte> entryBytes = data.Slice(offset, entrySizeBytes);
 
-                    break;
+                uint rawData = ReadU32LE(entryBytes, 0);
 
-                case ENTRY_TYPE.ENTRY_TYPE_MCU_TICK:
-
-                    // If timestamp is 0, skip entry
-                    /*if (ts30 == 0)
+                // Firmware uses erased flash == 0xFFFFFFFF as "empty"
+                if (rawData == 0xFFFF_FFFFu)
+                {
+                    if (firstEntryFound)
                     {
-                        offset += EntrySizeBytes;
+                        emptyCount++;
+                        if (emptyCount >= 32)
+                            return results;
+                    }
+
+                    index++;
+                    continue;
+                }
+
+                var type = DecodeType(rawData);
+
+                emptyCount = 0;
+
+                switch (type)
+                {
+                    default:
+                    case ENTRY_TYPE.ENTRY_TYPE_SYSTEM_TIME:
+                        index++;
                         continue;
-                    }*/
 
-                    break;
+                    case ENTRY_TYPE.ENTRY_TYPE_POWER_ON:
+                        break;
+
+                    case ENTRY_TYPE.ENTRY_TYPE_MCU_TICK:
+                        break;
+                }
+
+                var entry = WireViewPro2Device.BytesToStruct<DATALOGGER_Entry>(entryBytes.ToArray());
+                if (entry.HpwrSense > 3)
+                {
+                    index++;
+                    continue;
+                }
+
+                results.Add(entry);
+                firstEntryFound = true;
+                index++;
             }
-
-            // Parse struct from bytes
-            DATALOGGER_Entry entryStruct = WireViewPro2Device.BytesToStruct<DATALOGGER_Entry>(entry);
-
-            if(entryStruct.HpwrSense > 3)
-            {
-                // Invalid value, skip entry
-                offset += EntrySizeBytes;
-                continue;
-            }
-
-            results.Add(entryStruct);
-            firstEntryFound = true;
-            offset += EntrySizeBytes;
         }
 
         return results;
