@@ -20,14 +20,6 @@ public static class DeviceLogParser
         ENTRY_TYPE_EMPTY = 0x03
     }
 
-    // Pack 1
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct DATALogger_PowerSensor
-    {
-        public byte Voltage; // 100mV
-        public byte Current; // 100mA
-    }
-
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     public struct DATALOGGER_Entry
     {
@@ -35,7 +27,9 @@ public static class DeviceLogParser
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = SENSOR_TS_NUM)]
         public byte[] Ts; // Temperatures
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = SENSOR_POWER_NUM)]
-        public DATALogger_PowerSensor[] PowerSensors;
+        public byte[] Voltage; // Voltage in 100 mV
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = SENSOR_POWER_NUM)]
+        public byte[] Current; // Current in 100 mA
         public byte HpwrSense;
     }
 
