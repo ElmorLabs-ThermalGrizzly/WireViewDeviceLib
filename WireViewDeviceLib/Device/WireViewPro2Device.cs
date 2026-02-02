@@ -1,7 +1,8 @@
 ﻿using System;
+using System.Drawing;
 using System.IO.Ports;
-using System.Runtime.InteropServices;
 using System.Management;
+using System.Runtime.InteropServices;
 
 namespace WireView2.Device
 {
@@ -65,6 +66,8 @@ namespace WireView2.Device
         public string FirmwareVersion { get; private set; } = string.Empty;
         public string UniqueId { get; private set; } = string.Empty;
 
+        private int ConfigVersion = 0;
+
         private int _pollIntervalMs = 1000;
         public int PollIntervalMs
         {
@@ -98,6 +101,8 @@ namespace WireView2.Device
             {
                 HardwareRevision = $"{vd.Value.VendorId:X2}{vd.Value.ProductId:X2}";
                 FirmwareVersion = vd.Value.FwVersion.ToString();
+
+                ConfigVersion = vd.Value.FwVersion > 2 ? 1 : 0;
 
                 UniqueId = ReadUid() ?? string.Empty;
 
@@ -190,12 +195,25 @@ namespace WireView2.Device
             });
         }
 
-        public DeviceConfigStruct? ReadConfig()
+        public DeviceConfigStructV2? ReadConfig()
         {
             if (!Connected || _port == null) return null;
 
-            var size = Marshal.SizeOf<DeviceConfigStruct>();
+            var size = 0;
+
             byte[]? buf = null;
+
+            if(ConfigVersion == 0)
+            {
+                size = Marshal.SizeOf<DeviceConfigStructV1>();
+            }
+            else if (ConfigVersion == 1)
+            {
+                size = Marshal.SizeOf<DeviceConfigStructV2>();
+            } else
+            {
+                return null;
+            }
 
             lock (_port)
             {
@@ -207,15 +225,41 @@ namespace WireView2.Device
                 _port!.Close();
             }
 
-            if (buf == null) return null;
-            return BytesToStruct<DeviceConfigStruct>(buf);
+            if(buf == null) return null;
+
+            if (ConfigVersion == 0)
+            {
+                var _s = BytesToStruct<DeviceConfigStructV1>(buf);
+                return ConvertConfigV1ToV2(_s);
+            }
+            else if(ConfigVersion == 1) 
+            {
+                return BytesToStruct<DeviceConfigStructV2>(buf);
+            } else
+            {
+                return null;
+            }
         }
 
-        public void WriteConfig(DeviceConfigStruct config)
+        public void WriteConfig(DeviceConfigStructV2 config)
         {
             if (!Connected || _port == null) return;
 
-            var payload = StructToBytes(config);
+            var payload = new byte[0];
+
+            if (ConfigVersion == 0)
+            {
+                DeviceConfigStructV1 _s = ConvertConfigV2ToV1(config);
+                payload = StructToBytes(_s);
+            }
+            else if (ConfigVersion == 1)
+            {
+                payload = StructToBytes(config);
+            }
+            else
+            {
+                return;
+            }
 
             var frame = new byte[64];
             frame[0] = (byte)UsbCmd.CMD_WRITE_CONFIG;
