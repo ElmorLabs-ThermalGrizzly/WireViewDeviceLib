@@ -201,7 +201,7 @@ namespace WireView2.Device
                 }
 
                 var needle = $"vid_{vid:X4}&pid_{pid:X4}";
-                return EnumerateDeviceInstanceIds().Any(id =>
+                return WindowsSetupApi.EnumerateDeviceInstanceIds().Any(id =>
                     id.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0);
             }
 
@@ -212,42 +212,16 @@ namespace WireView2.Device
                     return false;
                 }
 
-                // Enumerate WinUSB interface paths and check vid/pid in the device path.
-                Guid guidRef = WinUsbDevice.GUID_DEVINTERFACE_WINUSB;
-                nint h = WinUsbDevice.SetupDiGetClassDevs(ref guidRef, null, nint.Zero, WinUsbDevice.DIGCF_PRESENT | WinUsbDevice.DIGCF_DEVICEINTERFACE);
-                if (h == nint.Zero || h == new nint(-1))
+                var needle = $"vid_{vid:X4}&pid_{pid:X4}";
+                foreach (var devicePath in WindowsSetupApi.EnumerateDeviceInterfacePaths(WinUsbDevice.GUID_DEVINTERFACE_WINUSB))
                 {
-                    return false;
-                }
-
-                try
-                {
-                    int index = 0;
-                    var idd = new WinUsbDevice.SP_DEVICE_INTERFACE_DATA
+                    if (devicePath.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0)
                     {
-                        cbSize = (uint)Marshal.SizeOf<WinUsbDevice.SP_DEVICE_INTERFACE_DATA>()
-                    };
-
-                    var needle = $"vid_{vid:X4}&pid_{pid:X4}";
-
-                    while (WinUsbDevice.SetupDiEnumDeviceInterfaces(h, nint.Zero, ref guidRef, (uint)index, ref idd))
-                    {
-                        var devicePath = WinUsbDevice.TryGetDevicePath(h, ref idd);
-                        if (!string.IsNullOrWhiteSpace(devicePath) &&
-                            devicePath.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0)
-                        {
-                            return true;
-                        }
-
-                        index++;
+                        return true;
                     }
+                }
 
-                    return false;
-                }
-                finally
-                {
-                    _ = WinUsbDevice.SetupDiDestroyDeviceInfoList(h);
-                }
+                return false;
             }
 
             public static async Task<bool> EnsureWinUsbDriverInstalledAsync(
@@ -303,86 +277,6 @@ namespace WireView2.Device
 
                 return IsWinUsbDriverInstalled(vid, pid);
             }
-
-            private static IEnumerable<string> EnumerateDeviceInstanceIds()
-            {
-                const int DIGCF_ALLCLASSES = 0x00000004;
-                const int DIGCF_PRESENT = 0x00000002;
-
-                nint h = SetupDiGetClassDevs(nint.Zero, null, nint.Zero, DIGCF_PRESENT | DIGCF_ALLCLASSES);
-                if (h == nint.Zero || h == new nint(-1))
-                {
-                    yield break;
-                }
-
-                try
-                {
-                    var devInfoData = new SP_DEVINFO_DATA { cbSize = (uint)Marshal.SizeOf<SP_DEVINFO_DATA>() };
-                    for (uint i = 0; SetupDiEnumDeviceInfo(h, i, ref devInfoData); i++)
-                    {
-                        var id = TryGetDeviceInstanceId(h, ref devInfoData);
-                        if (!string.IsNullOrWhiteSpace(id))
-                        {
-                            yield return id!;
-                        }
-                    }
-                }
-                finally
-                {
-                    _ = SetupDiDestroyDeviceInfoList(h);
-                }
-            }
-
-            private static string? TryGetDeviceInstanceId(nint infoSet, ref SP_DEVINFO_DATA devInfoData)
-            {
-                const uint CR_SUCCESS = 0x00000000;
-
-                // Instance IDs are small; start with a reasonable buffer and grow if needed.
-                var buffer = new char[512];
-                uint required = 0;
-
-                var cr = CM_Get_Device_ID(devInfoData.DevInst, buffer, (uint)buffer.Length, 0);
-                if (cr == CR_SUCCESS)
-                {
-                    return new string(buffer).TrimEnd('\0');
-                }
-
-                // If it didn't fit, ask for size and retry.
-                if (CM_Get_Device_ID_Size(out required, devInfoData.DevInst, 0) == CR_SUCCESS && required > 0)
-                {
-                    buffer = new char[required + 1];
-                    if (CM_Get_Device_ID(devInfoData.DevInst, buffer, (uint)buffer.Length, 0) == CR_SUCCESS)
-                    {
-                        return new string(buffer).TrimEnd('\0');
-                    }
-                }
-
-                return null;
-            }
-
-            [DllImport("setupapi.dll", SetLastError = true)]
-            private static extern nint SetupDiGetClassDevs(nint ClassGuid, string? Enumerator, nint hwndParent, int Flags);
-
-            [DllImport("setupapi.dll", SetLastError = true)]
-            private static extern bool SetupDiEnumDeviceInfo(nint DeviceInfoSet, uint MemberIndex, ref SP_DEVINFO_DATA DeviceInfoData);
-
-            [DllImport("setupapi.dll", SetLastError = true)]
-            private static extern bool SetupDiDestroyDeviceInfoList(nint DeviceInfoSet);
-
-            [StructLayout(LayoutKind.Sequential)]
-            private struct SP_DEVINFO_DATA
-            {
-                public uint cbSize;
-                public Guid ClassGuid;
-                public uint DevInst;
-                public nint Reserved;
-            }
-
-            [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
-            private static extern uint CM_Get_Device_ID(uint dnDevInst, [Out] char[] Buffer, uint BufferLen, uint ulFlags);
-
-            [DllImport("cfgmgr32.dll")]
-            private static extern uint CM_Get_Device_ID_Size(out uint pulLen, uint dnDevInst, uint ulFlags);
         }
 
         private sealed class DfuDevice : IDisposable
@@ -504,7 +398,7 @@ namespace WireView2.Device
                         return;
                     }
 
-                    await Task.Delay(Math.Min(Math.Max(wait, 1), 100)).ConfigureAwait(false);
+                    await Task.Delay(Math.Min(Math.Max(wait, 1), 100)). ConfigureAwait(false);
                 }
             }
 
@@ -561,9 +455,6 @@ namespace WireView2.Device
         // Minimal WinUSB wrapper + SetupAPI enumeration
         private sealed class WinUsbDevice : IDisposable
         {
-            internal const uint DIGCF_PRESENT = 0x00000002;
-            internal const uint DIGCF_DEVICEINTERFACE = 0x00000010;
-
             internal static readonly Guid GUID_DEVINTERFACE_WINUSB = new("dee824ef-729b-4a0e-9c14-b7117d33a817");
 
             private SafeFileHandle _deviceHandle = null!;
@@ -642,73 +533,16 @@ namespace WireView2.Device
 
             private static string? FindDevicePath(ushort vid, ushort pid)
             {
-                Guid guidRef = GUID_DEVINTERFACE_WINUSB;
-                var h = SetupDiGetClassDevs(ref guidRef, null, nint.Zero, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
-                if (h == nint.Zero || h == -1)
+                var needle = $"vid_{vid:X4}&pid_{pid:X4}";
+                foreach (var path in WindowsSetupApi.EnumerateDeviceInterfacePaths(GUID_DEVINTERFACE_WINUSB))
                 {
-                    return null;
-                }
-
-                try
-                {
-                    int index = 0;
-                    var idd = new SP_DEVICE_INTERFACE_DATA { cbSize = (uint)Marshal.SizeOf<SP_DEVICE_INTERFACE_DATA>() };
-
-                    while (SetupDiEnumDeviceInterfaces(h, nint.Zero, ref guidRef, (uint)index, ref idd))
+                    if (path.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0)
                     {
-                        var devicePath = TryGetDevicePath(h, ref idd);
-                        if (!string.IsNullOrWhiteSpace(devicePath))
-                        {
-                            var needle = $"vid_{vid:X4}&pid_{pid:X4}";
-                            if (devicePath.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0)
-                            {
-                                return devicePath;
-                            }
-                        }
-
-                        index++;
+                        return path;
                     }
-                }
-                finally
-                {
-                    SetupDiDestroyDeviceInfoList(h);
                 }
 
                 return null;
-            }
-
-            internal static string? TryGetDevicePath(nint h, ref SP_DEVICE_INTERFACE_DATA idd)
-            {
-                uint requiredSize = 0;
-                _ = SetupDiGetDeviceInterfaceDetail(h, ref idd, nint.Zero, 0, ref requiredSize, nint.Zero);
-                if (requiredSize == 0)
-                {
-                    return null;
-                }
-
-                var detailDataBuffer = Marshal.AllocHGlobal((int)requiredSize);
-                try
-                {
-                    var detail = new SP_DEVICE_INTERFACE_DETAIL_DATA
-                    {
-                        cbSize = (uint)(nint.Size == 8 ? 8 : 6),
-                        DevicePath = string.Empty
-                    };
-
-                    Marshal.StructureToPtr(detail, detailDataBuffer, false);
-
-                    if (!SetupDiGetDeviceInterfaceDetail(h, ref idd, detailDataBuffer, requiredSize, ref requiredSize, nint.Zero))
-                    {
-                        return null;
-                    }
-
-                    detail = Marshal.PtrToStructure<SP_DEVICE_INTERFACE_DETAIL_DATA>(detailDataBuffer);
-                    return string.IsNullOrWhiteSpace(detail.DevicePath) ? null : detail.DevicePath;
-                }
-                finally
-                {
-                    Marshal.FreeHGlobal(detailDataBuffer);
-                }
             }
 
             [DllImport("winusb.dll", SetLastError = true)]
@@ -735,47 +569,6 @@ namespace WireView2.Device
                 uint dwCreationDisposition,
                 uint dwFlagsAndAttributes,
                 nint hTemplateFile);
-
-            [DllImport("setupapi.dll", SetLastError = true)]
-            internal static extern nint SetupDiGetClassDevs(ref Guid ClassGuid, string? Enumerator, nint hwndParent, uint Flags);
-
-            [DllImport("setupapi.dll", SetLastError = true)]
-            internal static extern bool SetupDiEnumDeviceInterfaces(
-                nint DeviceInfoSet,
-                nint DeviceInfoData,
-                ref Guid InterfaceClassGuid,
-                uint MemberIndex,
-                ref SP_DEVICE_INTERFACE_DATA DeviceInterfaceData);
-
-            [DllImport("setupapi.dll", SetLastError = true, CharSet = CharSet.Auto)]
-            private static extern bool SetupDiGetDeviceInterfaceDetail(
-                nint DeviceInfoSet,
-                ref SP_DEVICE_INTERFACE_DATA DeviceInterfaceData,
-                nint DeviceInterfaceDetailData,
-                uint DeviceInterfaceDetailDataSize,
-                ref uint RequiredSize,
-                nint DeviceInfoData);
-
-            [DllImport("setupapi.dll", SetLastError = true)]
-            internal static extern bool SetupDiDestroyDeviceInfoList(nint DeviceInfoSet);
-
-            [StructLayout(LayoutKind.Sequential)]
-            internal struct SP_DEVICE_INTERFACE_DATA
-            {
-                public uint cbSize;
-                public Guid InterfaceClassGuid;
-                public uint Flags;
-                public nint Reserved;
-            }
-
-            [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
-            private struct SP_DEVICE_INTERFACE_DETAIL_DATA
-            {
-                public uint cbSize;
-
-                [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
-                public string DevicePath;
-            }
 
             [StructLayout(LayoutKind.Sequential, Pack = 1)]
             private struct WINUSB_SETUP_PACKET
