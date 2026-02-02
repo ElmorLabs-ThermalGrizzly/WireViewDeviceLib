@@ -169,7 +169,30 @@ namespace WireView2.Device
 
         public static class DfuHelper
         {
+
             public static async Task<bool> WaitForDeviceAsync(ushort vid, ushort pid, TimeSpan timeout)
+            {
+                try
+                {
+                    var end = DateTime.UtcNow + timeout;
+                    while (DateTime.UtcNow < end)
+                    {
+                        if (IsDevicePresent(vid, pid))
+                        {
+                            return true;
+                        }
+                        await Task.Delay(1000).ConfigureAwait(false);
+                    }
+                    return false;
+                }
+                catch
+                {
+                    // Treat any SetupAPI/Interop failure as "not available" rather than crashing the app.
+                    return false;
+                }
+            }
+
+            public static async Task<bool> WaitForWinUsbDeviceAsync(ushort vid, ushort pid, TimeSpan timeout)
             {
                 try
                 {
