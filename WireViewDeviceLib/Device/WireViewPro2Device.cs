@@ -1,52 +1,10 @@
-﻿using System;
-using System.Drawing;
-using System.IO.Ports;
-using System.Management;
+﻿using System.IO.Ports;
 using System.Runtime.InteropServices;
 
 namespace WireView2.Device
 {
     // Use SharedSerialPort instead of SerialPort
     using SerialPort = SharedSerialPort;
-
-    public static class Stm32PortFinder
-    {
-        public static List<string> FindMatchingComPorts()
-        {
-            var ports = new List<string>();
-
-            if (System.OperatingSystem.IsWindows())
-            {
-                using var searcher = new ManagementObjectSearcher(
-                    "SELECT * FROM Win32_PnPEntity WHERE Name LIKE '%(COM%)%'");
-
-                foreach (var obj in searcher.Get().Cast<ManagementObject>())
-                {
-                    var pnpId = obj["PNPDeviceID"] as string ?? string.Empty;
-                    if (pnpId.StartsWith(@"USB\VID_0483&PID_5740", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var name = obj["Name"] as string;
-                        if (name == null) continue;
-
-                        var start = name.LastIndexOf("(COM", StringComparison.OrdinalIgnoreCase);
-                        var end = name.LastIndexOf(')');
-                        if (start >= 0 && end > start)
-                        {
-                            var comPort = name.Substring(start + 1, end - start - 1);
-                            ports.Add(comPort);
-                        }
-                    }
-                }
-            }
-            else
-            {
-                // For non-Windows systems, we can implement other methods if needed
-                // For now, return empty list
-            }
-
-            return ports;
-        }
-    }
 
     public partial class WireViewPro2Device : IWireViewDevice, IDisposable
     {
@@ -119,7 +77,7 @@ namespace WireView2.Device
             _port.RtsEnable = false;
             _port.Close();
 
-            if(Connected)
+            if (Connected)
             {
                 _cts = new CancellationTokenSource();
                 _worker = Task.Run(() => PollLoop(_cts.Token));
@@ -153,7 +111,8 @@ namespace WireView2.Device
             var size = Marshal.SizeOf<BuildStruct>();
             byte[]? buf = null;
 
-            lock (_port) { 
+            lock (_port)
+            {
                 _port!.Open();
                 _port!.DiscardInBuffer();
                 _port.Write(new byte[] { (byte)UsbCmd.CMD_READ_BUILD_INFO }, 0, 1);
@@ -203,14 +162,15 @@ namespace WireView2.Device
 
             byte[]? buf = null;
 
-            if(ConfigVersion == 0)
+            if (ConfigVersion == 0)
             {
                 size = Marshal.SizeOf<DeviceConfigStructV1>();
             }
             else if (ConfigVersion == 1)
             {
                 size = Marshal.SizeOf<DeviceConfigStructV2>();
-            } else
+            }
+            else
             {
                 return null;
             }
@@ -225,17 +185,18 @@ namespace WireView2.Device
                 _port!.Close();
             }
 
-            if(buf == null) return null;
+            if (buf == null) return null;
 
             if (ConfigVersion == 0)
             {
                 var _s = BytesToStruct<DeviceConfigStructV1>(buf);
                 return ConvertConfigV1ToV2(_s);
             }
-            else if(ConfigVersion == 1) 
+            else if (ConfigVersion == 1)
             {
                 return BytesToStruct<DeviceConfigStructV2>(buf);
-            } else
+            }
+            else
             {
                 return null;
             }
@@ -331,7 +292,7 @@ namespace WireView2.Device
                 {
                     var sensors = ReadSensorValues();
                     if (sensors != null)
-            {
+                    {
                         var d = MapSensorStruct(sensors.Value);
                         DataUpdated?.Invoke(this, d);
                     }
@@ -339,7 +300,7 @@ namespace WireView2.Device
                 }
             }
             catch (Exception)
-                    {
+            {
                 Disconnect();
             }
         }
@@ -412,7 +373,7 @@ namespace WireView2.Device
 
         private SensorStruct? ReadSensorValues()
         {
-            if(_port == null) return null;
+            if (_port == null) return null;
 
             var size = Marshal.SizeOf<SensorStruct>();
 
@@ -446,7 +407,6 @@ namespace WireView2.Device
                                   ss.HpwrCapability == HpwrCapability.PSU_CAP_300W ? 300 :
                                   ss.HpwrCapability == HpwrCapability.PSU_CAP_150W ? 150 : 0,
 
-                // NEW
                 FaultStatus = ss.FaultStatus,
                 FaultLog = ss.FaultLog
             };
@@ -503,6 +463,5 @@ namespace WireView2.Device
         }
 
         public void Dispose() => Disconnect();
-
     }
 }
