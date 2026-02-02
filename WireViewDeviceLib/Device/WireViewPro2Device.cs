@@ -109,17 +109,7 @@ namespace WireView2.Device
             if (!Connected || _port == null) return null;
 
             var size = Marshal.SizeOf<BuildStruct>();
-            byte[]? buf = null;
-
-            lock (_port)
-            {
-                _port!.Open();
-                _port!.DiscardInBuffer();
-                _port.Write(new byte[] { (byte)UsbCmd.CMD_READ_BUILD_INFO }, 0, 1);
-
-                buf = ReadExact(size);
-                _port!.Close();
-            }
+            byte[]? buf = SendCmd(UsbCmd.CMD_READ_BUILD_INFO, size);
 
             if (buf == null) return null;
             BuildStruct buildStruct = BytesToStruct<BuildStruct>(buf);
@@ -127,31 +117,12 @@ namespace WireView2.Device
             return buildStruct.BuildInfo;
         }
 
-        public Task EnterBootloaderAsync()
+        public void EnterBootloader()
         {
-            if (!Connected || _port == null) return Task.CompletedTask;
+            if (!Connected || _port == null) return;
 
-            return Task.Run(() =>
-            {
-                try
-                {
-                    lock (_port)
-                    {
-                        _port!.Open();
-                        _port!.DiscardInBuffer();
-                        _port.Write(new byte[] { (byte)UsbCmd.CMD_BOOTLOADER }, 0, 1);
-                        _port!.Close();
-                    }
-                    Thread.Sleep(50);
-                }
-                catch
-                {
-                }
-                finally
-                {
-                    try { Disconnect(); } catch { }
-                }
-            });
+            SendCmd(UsbCmd.CMD_BOOTLOADER);
+            try { Disconnect(); } catch { }
         }
 
         public DeviceConfigStructV2? ReadConfig()
@@ -160,7 +131,6 @@ namespace WireView2.Device
 
             var size = 0;
 
-            byte[]? buf = null;
 
             if (ConfigVersion == 0)
             {
@@ -175,15 +145,7 @@ namespace WireView2.Device
                 return null;
             }
 
-            lock (_port)
-            {
-                _port!.Open();
-                _port!.DiscardInBuffer();
-                _port.Write(new byte[] { (byte)UsbCmd.CMD_READ_CONFIG }, 0, 1);
-
-                buf = ReadExact(size);
-                _port!.Close();
-            }
+            byte[]? buf = SendCmd(UsbCmd.CMD_READ_CONFIG, size);
 
             if (buf == null) return null;
 
@@ -248,40 +210,19 @@ namespace WireView2.Device
         public void NvmCmd(NVM_CMD cmd)
         {
             if (!Connected || _port == null) return;
-
-            lock (_port)
-            {
-                _port!.Open();
-                _port!.DiscardInBuffer();
-                _port!.Write(new[] { (byte)UsbCmd.CMD_NVM_CONFIG, (byte)0x55, (byte)0xAA, (byte)0x55, (byte)0xAA, (byte)cmd }, 0, 6);
-                _port!.Close();
-            }
+            SendData(new[] { (byte)UsbCmd.CMD_NVM_CONFIG, (byte)0x55, (byte)0xAA, (byte)0x55, (byte)0xAA, (byte)cmd }, 0);
         }
 
         public void ScreenCmd(SCREEN_CMD cmd)
         {
             if (!Connected || _port == null) return;
-
-            lock (_port)
-            {
-                _port!.Open();
-                _port!.DiscardInBuffer();
-                _port!.Write(new[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)cmd }, 0, 2);
-                _port!.Close();
-            }
+            SendData(new[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)cmd }, 0);
         }
 
         public void ClearFaults(int faultStatusMask = 0xFFFF, int faultLogMask = 0xFFFF)
         {
             if (!Connected || _port == null) return;
-
-            lock (_port)
-            {
-                _port!.Open();
-                _port!.DiscardInBuffer();
-                _port!.Write(new[] { (byte)UsbCmd.CMD_CLEAR_FAULTS, (byte)(faultStatusMask & 0xFF), (byte)((faultStatusMask >> 8) & 0xFF), (byte)(faultLogMask & 0xFF), (byte)((faultLogMask >> 8) & 0xFF) }, 0, 5);
-                _port!.Close();
-            }
+            SendData(new[] { (byte)UsbCmd.CMD_CLEAR_FAULTS, (byte)(faultStatusMask & 0xFF), (byte)((faultStatusMask >> 8) & 0xFF), (byte)(faultLogMask & 0xFF), (byte)((faultLogMask >> 8) & 0xFF) }, 0);
         }
 
         private void PollLoop(CancellationToken ct)
@@ -311,22 +252,7 @@ namespace WireView2.Device
 
             var size = WelcomeMessage.Length + 1;
 
-            byte[]? buf = null;
-            lock (_port)
-            {
-                _port!.Open();
-                _port!.RtsEnable = true;
-
-                if (sendCmd)
-                {
-                    _port!.DiscardInBuffer();
-                    _port!.Write(new byte[] { (byte)UsbCmd.CMD_WELCOME }, 0, 1);
-                }
-
-                buf = ReadExact(size);
-                _port.RtsEnable = false;
-                _port!.Close();
-            }
+            byte[]? buf = SendData(new byte[0], size, rts: true);
 
             if (buf == null) return false;
             return System.Text.Encoding.ASCII.GetString(buf, 0, size).TrimEnd('\0').CompareTo(WelcomeMessage) == 0;
@@ -337,15 +263,7 @@ namespace WireView2.Device
             if (_port == null) return null;
 
             var size = Marshal.SizeOf<VendorDataStruct>();
-            byte[]? buf;
-            lock (_port)
-            {
-                _port!.Open();
-                _port!.DiscardInBuffer();
-                _port!.Write(new byte[] { (byte)UsbCmd.CMD_READ_VENDOR_DATA }, 0, 1);
-                buf = ReadExact(size);
-                _port!.Close();
-            }
+            byte[]? buf = SendCmd(UsbCmd.CMD_READ_VENDOR_DATA, size);
 
             if (buf == null) return null;
             return BytesToStruct<VendorDataStruct>(buf);
@@ -353,19 +271,10 @@ namespace WireView2.Device
 
         private string? ReadUid()
         {
-            if (_port == null) return null;
+            if (!Connected || _port == null) return null;
 
             const int uidBytes = 12;
-            byte[]? buf = null;
-
-            lock (_port)
-            {
-                _port!.Open();
-                _port!.DiscardInBuffer();
-                _port!.Write(new byte[] { (byte)UsbCmd.CMD_READ_UID }, 0, 1);
-                buf = ReadExact(uidBytes);
-                _port!.Close();
-            }
+            byte[]? buf = SendCmd(UsbCmd.CMD_READ_UID, uidBytes);
 
             if (buf == null) return null;
             return BitConverter.ToString(buf).Replace("-", string.Empty);
@@ -377,15 +286,7 @@ namespace WireView2.Device
 
             var size = Marshal.SizeOf<SensorStruct>();
 
-            byte[]? buf = null;
-            lock (_port)
-            {
-                _port!.Open();
-                _port!.DiscardInBuffer();
-                _port!.Write(new byte[] { (byte)UsbCmd.CMD_READ_SENSOR_VALUES }, 0, 1);
-                buf = ReadExact(size);
-                _port.Close();
-            }
+            byte[]? buf = SendCmd(UsbCmd.CMD_READ_SENSOR_VALUES, size);
 
             if (buf == null) return null;
             return BytesToStruct<SensorStruct>(buf);
@@ -418,6 +319,39 @@ namespace WireView2.Device
             }
 
             return dd;
+        }
+
+        private byte[]? SendCmd(UsbCmd cmd, int responseSize = 0, bool rts = false)
+        {
+            return SendData(new[] { (byte)cmd }, responseSize, rts);
+        }
+
+        private byte[]? SendData(byte[] data, int responseSize = 0, bool rts = false)
+        {
+            if (_port == null) return null;
+            byte[]? buf = null;
+            lock (_port)
+            {
+                _port!.Open();
+                _port!.DiscardInBuffer();
+                if (rts)
+                {
+                    _port!.RtsEnable = true;
+                    Thread.Sleep(10);
+                }
+                _port!.Write(data, 0, data.Length);
+                if (responseSize > 0)
+                {
+                    buf = ReadExact(responseSize);
+                }
+                if (rts)
+                {
+                    Thread.Sleep(10);
+                    _port!.RtsEnable = false;
+                }
+                _port!.Close();
+            }
+            return buf;
         }
 
         private byte[]? ReadExact(int size)
