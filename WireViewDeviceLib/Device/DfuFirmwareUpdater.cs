@@ -259,11 +259,6 @@ namespace WireView2.Device
                     return false;
                 }
 
-                if (IsWinUsbDriverInstalled(vid, pid))
-                {
-                    return true;
-                }
-
                 if (!File.Exists(infPath))
                 {
                     throw new FileNotFoundException("Driver INF not found.", infPath);
@@ -275,7 +270,7 @@ namespace WireView2.Device
                     FileName = "pnputil.exe",
                     Arguments = $"/add-driver \"{infPath}\" /install",
                     UseShellExecute = true,
-                    Verb = "runas"
+                    Verb = "runas",
                 };
 
                 using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start pnputil.exe.");
@@ -286,19 +281,12 @@ namespace WireView2.Device
                     await Task.Delay(100, cancellationToken).ConfigureAwait(false);
                 }
 
-                // Give PnP re-enumeration a moment, then poll.
-                var end = DateTime.UtcNow + postInstallWait;
-                while (DateTime.UtcNow < end)
+                if (proc.ExitCode != 0)
                 {
-                    if (IsWinUsbDriverInstalled(vid, pid))
-                    {
-                        return true;
-                    }
-
-                    await Task.Delay(250, cancellationToken).ConfigureAwait(false);
+                    //throw new InvalidOperationException($"Driver installation failed with exit code {proc.ExitCode}.");
+                    return false;
                 }
-
-                return IsWinUsbDriverInstalled(vid, pid);
+                return true;
             }
         }
 
