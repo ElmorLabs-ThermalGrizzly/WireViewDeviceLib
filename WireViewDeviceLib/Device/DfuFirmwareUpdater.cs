@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
@@ -170,29 +171,48 @@ namespace WireView2.Device
         {
             public static async Task<bool> WaitForDeviceAsync(ushort vid, ushort pid, TimeSpan timeout)
             {
-                var end = DateTime.UtcNow + timeout;
-                while (DateTime.UtcNow < end)
+                try
                 {
-                    if (IsPresent(vid, pid))
+                    var end = DateTime.UtcNow + timeout;
+                    while (DateTime.UtcNow < end)
                     {
-                        return true;
+                        if (IsWinUsbDriverInstalled(vid, pid))
+                        {
+                            return true;
+                        }
+
+                        await Task.Delay(1000).ConfigureAwait(false);
                     }
 
-                    await Task.Delay(250).ConfigureAwait(false);
+                    return false;
                 }
-
-                return IsPresent(vid, pid);
+                catch
+                {
+                    // Treat any SetupAPI/Interop failure as "not available" rather than crashing the app.
+                    return false;
+                }
             }
 
-            private static bool IsPresent(ushort vid, ushort pid)
+            public static bool IsDevicePresent(ushort vid, ushort pid)
             {
                 if (!OperatingSystem.IsWindows())
                 {
                     return false;
                 }
 
-                // Pure SetupAPI approach: enumerate WinUSB interface paths and check vid/pid in the device path.
-                // (Matches the same approach used by WinUsbDevice.FindDevicePath)
+                var needle = $"vid_{vid:X4}&pid_{pid:X4}";
+                return EnumerateDeviceInstanceIds().Any(id =>
+                    id.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0);
+            }
+
+            public static bool IsWinUsbDriverInstalled(ushort vid, ushort pid)
+            {
+                if (!OperatingSystem.IsWindows())
+                {
+                    return false;
+                }
+
+                // Enumerate WinUSB interface paths and check vid/pid in the device path.
                 Guid guidRef = WinUsbDevice.GUID_DEVINTERFACE_WINUSB;
                 nint h = WinUsbDevice.SetupDiGetClassDevs(ref guidRef, null, nint.Zero, WinUsbDevice.DIGCF_PRESENT | WinUsbDevice.DIGCF_DEVICEINTERFACE);
                 if (h == nint.Zero || h == new nint(-1))
@@ -229,6 +249,140 @@ namespace WireView2.Device
                     _ = WinUsbDevice.SetupDiDestroyDeviceInfoList(h);
                 }
             }
+
+            public static async Task<bool> EnsureWinUsbDriverInstalledAsync(
+                ushort vid,
+                ushort pid,
+                string infPath,
+                TimeSpan postInstallWait,
+                CancellationToken cancellationToken = default)
+            {
+                if (!OperatingSystem.IsWindows())
+                {
+                    return false;
+                }
+
+                if (IsWinUsbDriverInstalled(vid, pid))
+                {
+                    return true;
+                }
+
+                if (!File.Exists(infPath))
+                {
+                    throw new FileNotFoundException("Driver INF not found.", infPath);
+                }
+
+                // Requires admin. If not elevated, pnputil will fail (access denied).
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "pnputil.exe",
+                    Arguments = $"/add-driver \"{infPath}\" /install",
+                    UseShellExecute = true,
+                    Verb = "runas"
+                };
+
+                using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start pnputil.exe.");
+
+                while (!proc.HasExited)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    await Task.Delay(100, cancellationToken).ConfigureAwait(false);
+                }
+
+                // Give PnP re-enumeration a moment, then poll.
+                var end = DateTime.UtcNow + postInstallWait;
+                while (DateTime.UtcNow < end)
+                {
+                    if (IsWinUsbDriverInstalled(vid, pid))
+                    {
+                        return true;
+                    }
+
+                    await Task.Delay(250, cancellationToken).ConfigureAwait(false);
+                }
+
+                return IsWinUsbDriverInstalled(vid, pid);
+            }
+
+            private static IEnumerable<string> EnumerateDeviceInstanceIds()
+            {
+                const int DIGCF_ALLCLASSES = 0x00000004;
+                const int DIGCF_PRESENT = 0x00000002;
+
+                nint h = SetupDiGetClassDevs(nint.Zero, null, nint.Zero, DIGCF_PRESENT | DIGCF_ALLCLASSES);
+                if (h == nint.Zero || h == new nint(-1))
+                {
+                    yield break;
+                }
+
+                try
+                {
+                    var devInfoData = new SP_DEVINFO_DATA { cbSize = (uint)Marshal.SizeOf<SP_DEVINFO_DATA>() };
+                    for (uint i = 0; SetupDiEnumDeviceInfo(h, i, ref devInfoData); i++)
+                    {
+                        var id = TryGetDeviceInstanceId(h, ref devInfoData);
+                        if (!string.IsNullOrWhiteSpace(id))
+                        {
+                            yield return id!;
+                        }
+                    }
+                }
+                finally
+                {
+                    _ = SetupDiDestroyDeviceInfoList(h);
+                }
+            }
+
+            private static string? TryGetDeviceInstanceId(nint infoSet, ref SP_DEVINFO_DATA devInfoData)
+            {
+                const uint CR_SUCCESS = 0x00000000;
+
+                // Instance IDs are small; start with a reasonable buffer and grow if needed.
+                var buffer = new char[512];
+                uint required = 0;
+
+                var cr = CM_Get_Device_ID(devInfoData.DevInst, buffer, (uint)buffer.Length, 0);
+                if (cr == CR_SUCCESS)
+                {
+                    return new string(buffer).TrimEnd('\0');
+                }
+
+                // If it didn't fit, ask for size and retry.
+                if (CM_Get_Device_ID_Size(out required, devInfoData.DevInst, 0) == CR_SUCCESS && required > 0)
+                {
+                    buffer = new char[required + 1];
+                    if (CM_Get_Device_ID(devInfoData.DevInst, buffer, (uint)buffer.Length, 0) == CR_SUCCESS)
+                    {
+                        return new string(buffer).TrimEnd('\0');
+                    }
+                }
+
+                return null;
+            }
+
+            [DllImport("setupapi.dll", SetLastError = true)]
+            private static extern nint SetupDiGetClassDevs(nint ClassGuid, string? Enumerator, nint hwndParent, int Flags);
+
+            [DllImport("setupapi.dll", SetLastError = true)]
+            private static extern bool SetupDiEnumDeviceInfo(nint DeviceInfoSet, uint MemberIndex, ref SP_DEVINFO_DATA DeviceInfoData);
+
+            [DllImport("setupapi.dll", SetLastError = true)]
+            private static extern bool SetupDiDestroyDeviceInfoList(nint DeviceInfoSet);
+
+            [StructLayout(LayoutKind.Sequential)]
+            private struct SP_DEVINFO_DATA
+            {
+                public uint cbSize;
+                public Guid ClassGuid;
+                public uint DevInst;
+                public nint Reserved;
+            }
+
+            [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
+            private static extern uint CM_Get_Device_ID(uint dnDevInst, [Out] char[] Buffer, uint BufferLen, uint ulFlags);
+
+            [DllImport("cfgmgr32.dll")]
+            private static extern uint CM_Get_Device_ID_Size(out uint pulLen, uint dnDevInst, uint ulFlags);
         }
 
         private sealed class DfuDevice : IDisposable
