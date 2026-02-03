@@ -199,7 +199,7 @@ namespace WireView2.Device
                     var end = DateTime.UtcNow + timeout;
                     while (DateTime.UtcNow < end)
                     {
-                        if (IsWinUsbDriverInstalled(vid, pid))
+                        if (IsWinUsbDeviceInstalled(vid, pid))
                         {
                             return true;
                         }
@@ -228,7 +228,7 @@ namespace WireView2.Device
                     id.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0);
             }
 
-            public static bool IsWinUsbDriverInstalled(ushort vid, ushort pid)
+            public static bool IsWinUsbDeviceInstalled(ushort vid, ushort pid)
             {
                 if (!OperatingSystem.IsWindows())
                 {
@@ -287,6 +287,42 @@ namespace WireView2.Device
                     return false;
                 }
                 return true;
+            }
+
+            public static async Task<bool> IsWinUsbDriverInstalledAsync(
+                string infPath,
+                CancellationToken cancellationToken = default)
+            {
+                if (!OperatingSystem.IsWindows())
+                {
+                    return false;
+                }
+                if (!File.Exists(infPath))
+                {
+                    throw new FileNotFoundException("Driver INF not found.", infPath);
+                }
+
+                // Does not require admin
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "pnputil.exe",
+                    Arguments = $"/enum-drivers",
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                };
+                using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start pnputil.exe.");
+                string output = await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
+                while (!proc.HasExited)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    await Task.Delay(100, cancellationToken).ConfigureAwait(false);
+                }
+                if (proc.ExitCode != 0)
+                {
+                    throw new InvalidOperationException($"Driver enumeration failed with exit code {proc.ExitCode}.");
+                }
+                string needle = Path.GetFileNameWithoutExtension(infPath);
+                return output.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
             }
         }
 
