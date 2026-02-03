@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -72,7 +71,7 @@ namespace WireView2.Device
                     // ignore and retry
                 }
 
-                await Task.Delay(1000, ct).ConfigureAwait(false);
+                await Task.Delay(_pollMs, ct).ConfigureAwait(false);
             }
         }
 
@@ -80,38 +79,56 @@ namespace WireView2.Device
         {
             lock (_gate)
             {
-                if (_device is { Connected: true }) return;
-
-                // Try find port and connect
-                var ports = Stm32PortFinder.FindMatchingComPorts();
-                foreach (var port in ports)
+                if (_device is { Connected: true })
                 {
-                    if (port == null)
+                    return;
+                }
+
+                // If we have a stale/disconnected instance, drop it so we can reconnect cleanly.
+                if (_device != null)
+                {
+                    DisconnectInternal();
+                }
+
+                var ports = Stm32PortFinder.FindMatchingComPorts();
+                if (ports.Count == 0)
+                {
+                    return;
+                }
+
+                // Try connect to all matching ports
+                foreach(var port in ports) { 
+
+                    var dev = new WireViewPro2Device(port)
                     {
-                        // no port present; if we had a device, dispose it
-                        DisconnectInternal();
-                        return;
+                        PollIntervalMs = _pollMs
+                    };
+                    try
+                    {
+                        dev.Connect();
+                        if (dev.Connected)
+                        {
+                            // success
+                            _device = dev;
+                            dev.ConnectionChanged += OnDeviceConnectionChanged;
+                            _dataForwardHandler ??= (_, d) => DataUpdated?.Invoke(this, d);
+                            dev.DataUpdated += _dataForwardHandler;
+                            ConnectionChanged?.Invoke(this, true);
+                            return;
+                        }
+                        else
+                        {
+                            dev.Dispose();
+                        }
                     }
-
-                    // If wrong or disposed device, reset
-                    if (_device == null)
+                    catch
                     {
-                        var dev = new WireViewPro2Device(port);
-                        dev.PollIntervalMs = _pollMs;
-                        dev.ConnectionChanged += OnDeviceConnectionChanged;
-
-                        _dataForwardHandler ??= (_, d) => DataUpdated?.Invoke(this, d);
-                        dev.DataUpdated += _dataForwardHandler;
-
                         try
                         {
-                            _device = dev;
-                            dev.Connect();
+                            dev.Dispose();
                         }
                         catch
                         {
-                            _device = null;
-                            DisconnectInternal();
                         }
                     }
 
