@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 
 namespace WireView2.Device
 {
@@ -9,6 +10,86 @@ namespace WireView2.Device
     {
         // WinUSB device interface class GUID (GUID_DEVINTERFACE_WINUSB)
         private static readonly Guid GuidDevInterfaceWinUsb = new("dee824ef-729b-4a0e-9c14-b7117d33a817");
+
+        public static async Task<int> StopServicesMatchingTmInstallAsync(CancellationToken cancellationToken = default)
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return 0;
+            }
+
+            // Query all services, then stop those whose SERVICE_NAME matches: tm*Install
+            // Example matches: tmFooInstall, tmInstall, tm123Install
+            var queryPsi = new ProcessStartInfo
+            {
+                FileName = "sc.exe",
+                Arguments = "query state= all",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+
+            using var queryProc = Process.Start(queryPsi) ?? throw new InvalidOperationException("Failed to start sc.exe.");
+            var outputTask = queryProc.StandardOutput.ReadToEndAsync(cancellationToken);
+            var errorTask = queryProc.StandardError.ReadToEndAsync(cancellationToken);
+
+            await queryProc.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            var output = await outputTask.ConfigureAwait(false);
+            _ = await errorTask.ConfigureAwait(false);
+
+            if (queryProc.ExitCode != 0)
+            {
+                return 0;
+            }
+
+            var servicesToStop = new List<string>();
+            var rx = new Regex(@"^\s*SERVICE_NAME\s*:\s*(?<name>\S+)\s*$", RegexOptions.Multiline | RegexOptions.CultureInvariant);
+            foreach (Match m in rx.Matches(output))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var name = m.Groups["name"].Value;
+                if (name.StartsWith("tm", StringComparison.OrdinalIgnoreCase) &&
+                    name.EndsWith("Install", StringComparison.OrdinalIgnoreCase))
+                {
+                    servicesToStop.Add(name);
+                }
+            }
+
+            var unique = servicesToStop.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            int stoppedCount = 0;
+
+            foreach (var serviceName in unique)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                // Stop may require admin privileges depending on service permissions.
+                var stopPsi = new ProcessStartInfo
+                {
+                    FileName = "sc.exe",
+                    Arguments = $"stop \"{serviceName}\"",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                };
+
+                using var stopProc = Process.Start(stopPsi);
+                if (stopProc is null)
+                {
+                    continue;
+                }
+
+                await stopProc.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+                if (stopProc.ExitCode == 0)
+                {
+                    stoppedCount++;
+                }
+            }
+
+            return stoppedCount;
+        }
 
         public static async Task<bool> WaitForDevicePresentAsync(ushort vid, ushort pid, TimeSpan timeout, CancellationToken cancellationToken = default)
         {
