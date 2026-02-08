@@ -27,7 +27,7 @@ namespace WireView2.Device
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
-                CreateNoWindow = true,
+                CreateNoWindow = true
             };
 
             using var queryProc = Process.Start(queryPsi) ?? throw new InvalidOperationException("Failed to start sc.exe.");
@@ -69,10 +69,8 @@ namespace WireView2.Device
                 {
                     FileName = "sc.exe",
                     Arguments = $"stop \"{serviceName}\"",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
+                    UseShellExecute = true,
+                    Verb = "runas"
                 };
 
                 using var stopProc = Process.Start(stopPsi);
