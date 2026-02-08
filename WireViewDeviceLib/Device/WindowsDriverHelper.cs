@@ -70,6 +70,7 @@ namespace WireView2.Device
                     FileName = "sc.exe",
                     Arguments = $"stop \"{serviceName}\"",
                     UseShellExecute = true,
+                    CreateNoWindow = true,
                     Verb = "runas"
                 };
 
@@ -222,7 +223,8 @@ namespace WireView2.Device
                 FileName = "pnputil.exe",
                 Arguments = $"/add-driver \"{infPath}\" /install",
                 UseShellExecute = true,
-                Verb = "runas",
+                CreateNoWindow = true,
+                Verb = "runas"
             };
 
             using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start pnputil.exe.");
@@ -423,6 +425,7 @@ namespace WireView2.Device
                 FileName = "pnputil.exe",
                 Arguments = $"/delete-driver \"{publishedInfName}\" /uninstall /force",
                 UseShellExecute = true,
+                CreateNoWindow = true,
                 Verb = "runas",
             };
 
