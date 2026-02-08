@@ -10,6 +10,7 @@ namespace WireView2.Device
 
         public const uint SPDRP_HARDWAREID = 0x00000001;
         public const uint SPDRP_FRIENDLYNAME = 0x0000000C;
+        public const uint SPDRP_DEVICEDESC = 0x00000000;
 
         private static readonly nint InvalidHandleValue = new(-1);
 
@@ -48,6 +49,42 @@ namespace WireView2.Device
                     {
                         yield return id!;
                     }
+                }
+            }
+            finally
+            {
+                _ = SetupDiDestroyDeviceInfoList(h);
+            }
+        }
+
+        public static IEnumerable<(string InstanceId, string? DeviceDesc, string? FriendlyName)> EnumeratePresentDevicesWithNames()
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                yield break;
+            }
+
+            nint h = SetupDiGetClassDevsAllClassesPresent();
+            if (IsInvalidHandle(h))
+            {
+                yield break;
+            }
+
+            try
+            {
+                var devInfoData = new SP_DEVINFO_DATA { cbSize = (uint)Marshal.SizeOf<SP_DEVINFO_DATA>() };
+                for (uint i = 0; SetupDiEnumDeviceInfo(h, i, ref devInfoData); i++)
+                {
+                    var id = TryGetDeviceInstanceId(devInfoData.DevInst);
+                    if (string.IsNullOrWhiteSpace(id))
+                    {
+                        continue;
+                    }
+
+                    var deviceDesc = TryGetDeviceRegistryPropertyString(h, ref devInfoData, SPDRP_DEVICEDESC);
+                    var friendlyName = TryGetDeviceRegistryPropertyString(h, ref devInfoData, SPDRP_FRIENDLYNAME);
+
+                    yield return (id!, deviceDesc, friendlyName);
                 }
             }
             finally

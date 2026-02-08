@@ -169,161 +169,53 @@ namespace WireView2.Device
 
         public static class DfuHelper
         {
+            private const string GuiStDfuDevInfFileName = "guistdfudev.inf";
+            private const string ExpectedDfuDeviceDescription = "DFU in FS Mode";
 
-            public static async Task<bool> WaitForDeviceAsync(ushort vid, ushort pid, TimeSpan timeout)
+            public static Task<bool> WaitForDeviceAsync(ushort vid, ushort pid, TimeSpan timeout) =>
+                WindowsDriverHelper.WaitForDevicePresentAsync(vid, pid, timeout);
+
+            public static Task<bool> WaitForWinUsbDeviceAsync(ushort vid, ushort pid, TimeSpan timeout) =>
+                WindowsDriverHelper.WaitForWinUsbDeviceInterfaceAsync(vid, pid, timeout);
+
+            public static bool IsDevicePresent(ushort vid, ushort pid) =>
+                WindowsDriverHelper.IsDevicePresent(vid, pid);
+
+            public static bool IsWinUsbDeviceInstalled(ushort vid, ushort pid) =>
+                WindowsDriverHelper.IsWinUsbDeviceInterfacePresent(vid, pid);
+
+            public static string? TryGetConnectedDeviceDescription(ushort vid, ushort pid) =>
+                WindowsDriverHelper.TryGetDeviceDescription(vid, pid);
+
+            public static bool IsExpectedDfuDeviceName(ushort vid, ushort pid, out string? actualName)
             {
-                try
+                actualName = TryGetConnectedDeviceDescription(vid, pid);
+                if (string.IsNullOrWhiteSpace(actualName))
                 {
-                    var end = DateTime.UtcNow + timeout;
-                    while (DateTime.UtcNow < end)
-                    {
-                        if (IsDevicePresent(vid, pid))
-                        {
-                            return true;
-                        }
-                        await Task.Delay(1000).ConfigureAwait(false);
-                    }
                     return false;
                 }
-                catch
-                {
-                    // Treat any SetupAPI/Interop failure as "not available" rather than crashing the app.
-                    return false;
-                }
+
+                return actualName.Equals(ExpectedDfuDeviceDescription, StringComparison.OrdinalIgnoreCase);
             }
 
-            public static async Task<bool> WaitForWinUsbDeviceAsync(ushort vid, ushort pid, TimeSpan timeout)
-            {
-                try
-                {
-                    var end = DateTime.UtcNow + timeout;
-                    while (DateTime.UtcNow < end)
-                    {
-                        if (IsWinUsbDeviceInstalled(vid, pid))
-                        {
-                            return true;
-                        }
-
-                        await Task.Delay(1000).ConfigureAwait(false);
-                    }
-
-                    return false;
-                }
-                catch
-                {
-                    // Treat any SetupAPI/Interop failure as "not available" rather than crashing the app.
-                    return false;
-                }
-            }
-
-            public static bool IsDevicePresent(ushort vid, ushort pid)
-            {
-                if (!OperatingSystem.IsWindows())
-                {
-                    return false;
-                }
-
-                var needle = $"vid_{vid:X4}&pid_{pid:X4}";
-                return WindowsSetupApi.EnumerateDeviceInstanceIds().Any(id =>
-                    id.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0);
-            }
-
-            public static bool IsWinUsbDeviceInstalled(ushort vid, ushort pid)
-            {
-                if (!OperatingSystem.IsWindows())
-                {
-                    return false;
-                }
-
-                var needle = $"vid_{vid:X4}&pid_{pid:X4}";
-                foreach (var devicePath in WindowsSetupApi.EnumerateDeviceInterfacePaths(WinUsbDevice.GUID_DEVINTERFACE_WINUSB))
-                {
-                    if (devicePath.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0)
-                    {
-                        return true;
-                    }
-                }
-
-                return false;
-            }
-
-            public static async Task<bool> EnsureWinUsbDriverInstalledAsync(
+            public static Task<bool> EnsureWinUsbDriverInstalledAsync(
                 ushort vid,
                 ushort pid,
                 string infPath,
                 TimeSpan postInstallWait,
-                CancellationToken cancellationToken = default)
-            {
-                if (!OperatingSystem.IsWindows())
-                {
-                    return false;
-                }
+                CancellationToken cancellationToken = default) =>
+                WindowsDriverHelper.EnsureDriverInstalledAsync(infPath, cancellationToken);
 
-                if (!File.Exists(infPath))
-                {
-                    throw new FileNotFoundException("Driver INF not found.", infPath);
-                }
-
-                // Requires admin. If not elevated, pnputil will fail (access denied).
-                var psi = new ProcessStartInfo
-                {
-                    FileName = "pnputil.exe",
-                    Arguments = $"/add-driver \"{infPath}\" /install",
-                    UseShellExecute = true,
-                    Verb = "runas",
-                };
-
-                using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start pnputil.exe.");
-
-                while (!proc.HasExited)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    await Task.Delay(100, cancellationToken).ConfigureAwait(false);
-                }
-
-                if (proc.ExitCode != 0)
-                {
-                    //throw new InvalidOperationException($"Driver installation failed with exit code {proc.ExitCode}.");
-                    return false;
-                }
-                return true;
-            }
-
-            public static async Task<bool> IsWinUsbDriverInstalledAsync(
+            public static Task<bool> IsWinUsbDriverInstalledAsync(
                 string infPath,
-                CancellationToken cancellationToken = default)
-            {
-                if (!OperatingSystem.IsWindows())
-                {
-                    return false;
-                }
-                if (!File.Exists(infPath))
-                {
-                    throw new FileNotFoundException("Driver INF not found.", infPath);
-                }
+                CancellationToken cancellationToken = default) =>
+                WindowsDriverHelper.IsDriverInfInstalledAsync(infPath, cancellationToken);
 
-                // Does not require admin
-                var psi = new ProcessStartInfo
-                {
-                    FileName = "pnputil.exe",
-                    Arguments = $"/enum-drivers",
-                    RedirectStandardOutput = true,
-                    UseShellExecute = false,
-                };
-                using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start pnputil.exe.");
-                string output = await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
-                while (!proc.HasExited)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    await Task.Delay(100, cancellationToken).ConfigureAwait(false);
-                }
-                if (proc.ExitCode != 0)
-                {
-                    throw new InvalidOperationException($"Driver enumeration failed with exit code {proc.ExitCode}.");
-                }
-                string needle = Path.GetFileNameWithoutExtension(infPath);
-                return output.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
-            }
+            public static Task<bool> IsGuiStDfuDevDriverInstalledAsync(CancellationToken cancellationToken = default) =>
+                WindowsDriverHelper.IsDriverInstalledByOriginalInfNameAsync(GuiStDfuDevInfFileName, cancellationToken);
+
+            public static Task<bool> RemoveGuiStDfuDevDriverIfPresentAsync(CancellationToken cancellationToken = default) =>
+                WindowsDriverHelper.RemoveDriverByOriginalInfNameIfPresentAsync(GuiStDfuDevInfFileName, cancellationToken);
         }
 
         private sealed class DfuDevice : IDisposable
@@ -445,7 +337,7 @@ namespace WireView2.Device
                         return;
                     }
 
-                    await Task.Delay(Math.Min(Math.Max(wait, 1), 100)). ConfigureAwait(false);
+                    await Task.Delay(Math.Min(Math.Max(wait, 1), 100)).ConfigureAwait(false);
                 }
             }
 
