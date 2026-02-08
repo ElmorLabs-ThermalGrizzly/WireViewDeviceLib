@@ -11,11 +11,11 @@ namespace WireView2.Device
         // WinUSB device interface class GUID (GUID_DEVINTERFACE_WINUSB)
         private static readonly Guid GuidDevInterfaceWinUsb = new("dee824ef-729b-4a0e-9c14-b7117d33a817");
 
-        public static async Task<int> StopServicesMatchingTmInstallAsync(CancellationToken cancellationToken = default)
+        public static async Task<IReadOnlyList<string>> StopServicesMatchingTmInstallAsync(CancellationToken cancellationToken = default)
         {
             if (!OperatingSystem.IsWindows())
             {
-                return 0;
+                return Array.Empty<string>();
             }
 
             // Query all services, then stop those whose SERVICE_NAME matches: tm*Install
@@ -40,7 +40,7 @@ namespace WireView2.Device
 
             if (queryProc.ExitCode != 0)
             {
-                return 0;
+                return Array.Empty<string>();
             }
 
             var servicesToStop = new List<string>();
@@ -58,7 +58,7 @@ namespace WireView2.Device
             }
 
             var unique = servicesToStop.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            int stoppedCount = 0;
+            var stopped = new List<string>(capacity: unique.Count);
 
             foreach (var serviceName in unique)
             {
@@ -83,11 +83,49 @@ namespace WireView2.Device
                 await stopProc.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
                 if (stopProc.ExitCode == 0)
                 {
-                    stoppedCount++;
+                    stopped.Add(serviceName);
                 }
             }
 
-            return stoppedCount;
+            return stopped;
+        }
+
+        public static async Task<int> StartServicesAsync(IEnumerable<string> serviceNames, CancellationToken cancellationToken = default)
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return 0;
+            }
+
+            int startedCount = 0;
+
+            foreach (var serviceName in serviceNames.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var startPsi = new ProcessStartInfo
+                {
+                    FileName = "sc.exe",
+                    Arguments = $"start \"{serviceName}\"",
+                    UseShellExecute = true,
+                    CreateNoWindow = true,
+                    Verb = "runas"
+                };
+
+                using var startProc = Process.Start(startPsi);
+                if (startProc is null)
+                {
+                    continue;
+                }
+
+                await startProc.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+                if (startProc.ExitCode == 0)
+                {
+                    startedCount++;
+                }
+            }
+
+            return startedCount;
         }
 
         public static async Task<bool> WaitForDevicePresentAsync(ushort vid, ushort pid, TimeSpan timeout, CancellationToken cancellationToken = default)
