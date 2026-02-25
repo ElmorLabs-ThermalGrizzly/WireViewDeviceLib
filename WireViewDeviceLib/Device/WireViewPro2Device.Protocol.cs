@@ -235,8 +235,7 @@ namespace WireView2.Device
             AVG_177MS,
             AVG_354MS,
             AVG_709MS,
-            AVG_1417MS,
-            AVG_NUM
+            AVG_1417MS
         }
 
 
