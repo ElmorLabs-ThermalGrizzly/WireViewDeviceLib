@@ -8,35 +8,6 @@ namespace WireView2.Device
         // Keep in sync with firmware DEVICE_STR_LEN
         public const int DEVICE_STR_LEN = 32;
 
-        public enum THEME_BACKGROUND : byte
-        {
-            ThermalGrizzlyOrange = 1,
-            ThermalGrizzlyDark = 2,
-            Disabled = 255
-        }
-        
-        public enum THEME_FAN : byte
-        {
-            ThermalGrizzlyOrange = 0x64, // Bitmap 4 + 6
-            ThermalGrizzlyDark = 0x75, // Bitmap 5 + 7
-            ThermalGrizzlyBlackWhite = 0x98, // Bitmap 8 + 9
-        }
-
-        private const UInt32 THEME_PRIMARY_COLOR_TG1 = 0xFFFFFFFF; // White
-        private const UInt32 THEME_SECONDARY_COLOR_TG1 = 0xFF646464; // Light gray
-        private const UInt32 THEME_HIGHLIGHT_COLOR_TG1 = 0xFFE64121; // TG orange
-        private const UInt32 THEME_BACKGROUND_COLOR_TG1 = 0xFF000000; // Black
-
-        private const UInt32 THEME_PRIMARY_COLOR_TG2 = 0xFFFFFFFF; // White
-        private const UInt32 THEME_SECONDARY_COLOR_TG2 = 0xFF646464; // Light gray
-        private const UInt32 THEME_HIGHLIGHT_COLOR_TG2 = 0xFFBEBEBE; // TG light gray
-        private const UInt32 THEME_BACKGROUND_COLOR_TG2 = 0xFF000000; // Black
-
-        private const UInt32 THEME_PRIMARY_COLOR_TG3 = 0xFF969696; // Grey
-        private const UInt32 THEME_SECONDARY_COLOR_TG3 = 0xFF505050; // Lighter gray
-        private const UInt32 THEME_HIGHLIGHT_COLOR_TG3 = 0xFFFFFFFF; // White
-        private const UInt32 THEME_BACKGROUND_COLOR_TG3 = 0xFF000000; // Black
-
         private enum UsbCmd : byte
         {
             CMD_WELCOME,
