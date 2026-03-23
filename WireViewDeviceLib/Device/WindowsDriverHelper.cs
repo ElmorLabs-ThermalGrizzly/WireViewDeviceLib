@@ -1,5 +1,12 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace WireView2.Device
 {
@@ -18,8 +25,6 @@ namespace WireView2.Device
                 return Array.Empty<string>();
             }
 
-            // Query all services, then stop those whose SERVICE_NAME matches: tm*Install
-            // Example matches: tmFooInstall, tmInstall, tm123Install
             var queryPsi = new ProcessStartInfo
             {
                 FileName = "sc.exe",
@@ -44,7 +49,9 @@ namespace WireView2.Device
             }
 
             var servicesToStop = new List<string>();
-            var rx = new Regex(@"^\s*SERVICE_NAME\s*:\s*(?<name>\S+)\s*$", RegexOptions.Multiline | RegexOptions.CultureInvariant);
+            
+            // FIX: Supports "SERVICE_NAME" (English) and "DIENST_NAME"/"DIENSTNAME" (German)
+            var rx = new Regex(@"^\s*(SERVICE_NAME|DIENST_NAME|DIENSTNAME)\s*:\s*(?<name>\S+)\s*$", RegexOptions.Multiline | RegexOptions.CultureInvariant);
             foreach (Match m in rx.Matches(output))
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -64,7 +71,6 @@ namespace WireView2.Device
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                // Stop may require admin privileges depending on service permissions.
                 var stopPsi = new ProcessStartInfo
                 {
                     FileName = "sc.exe",
@@ -74,16 +80,21 @@ namespace WireView2.Device
                     Verb = "runas"
                 };
 
-                using var stopProc = Process.Start(stopPsi);
-                if (stopProc is null)
+                try
                 {
-                    continue;
-                }
+                    using var stopProc = Process.Start(stopPsi);
+                    if (stopProc is null) continue;
 
-                await stopProc.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-                if (stopProc.ExitCode == 0)
+                    await stopProc.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+                    if (stopProc.ExitCode == 0)
+                    {
+                        stopped.Add(serviceName);
+                    }
+                }
+                catch (Win32Exception)
                 {
-                    stopped.Add(serviceName);
+                    // UAC prompt (admin rights) was declined by the user
+                    continue;
                 }
             }
 
@@ -112,16 +123,21 @@ namespace WireView2.Device
                     Verb = "runas"
                 };
 
-                using var startProc = Process.Start(startPsi);
-                if (startProc is null)
+                try
                 {
-                    continue;
-                }
+                    using var startProc = Process.Start(startPsi);
+                    if (startProc is null) continue;
 
-                await startProc.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-                if (startProc.ExitCode == 0)
+                    await startProc.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+                    if (startProc.ExitCode == 0)
+                    {
+                        startedCount++;
+                    }
+                }
+                catch (Win32Exception)
                 {
-                    startedCount++;
+                    // UAC prompt was declined
+                    continue;
                 }
             }
 
@@ -149,7 +165,6 @@ namespace WireView2.Device
             }
             catch
             {
-                // Treat any SetupAPI/Interop failure as "not available" rather than crashing the app.
                 return false;
             }
         }
@@ -175,29 +190,24 @@ namespace WireView2.Device
             }
             catch
             {
-                // Treat any SetupAPI/Interop failure as "not available" rather than crashing the app.
                 return false;
             }
         }
 
         public static bool IsDevicePresent(ushort vid, ushort pid)
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                return false;
-            }
+            if (!OperatingSystem.IsWindows()) return false;
 
             var needle = $"vid_{vid:X4}&pid_{pid:X4}";
+            
+            // Note: This assumes that WindowsSetupApi.EnumerateDeviceInstanceIds() exists in the project.
             return WindowsSetupApi.EnumerateDeviceInstanceIds().Any(id =>
                 id.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
         public static bool IsWinUsbDeviceInterfacePresent(ushort vid, ushort pid)
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                return false;
-            }
+            if (!OperatingSystem.IsWindows()) return false;
 
             var needle = $"vid_{vid:X4}&pid_{pid:X4}";
             foreach (var devicePath in WindowsSetupApi.EnumerateDeviceInterfacePaths(GuidDevInterfaceWinUsb))
@@ -213,10 +223,7 @@ namespace WireView2.Device
 
         public static string? TryGetDeviceDescription(ushort vid, ushort pid)
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                return null;
-            }
+            if (!OperatingSystem.IsWindows()) return null;
 
             var needle = $"vid_{vid:X4}&pid_{pid:X4}";
 
@@ -229,33 +236,22 @@ namespace WireView2.Device
                         continue;
                     }
 
-                    // Prefer FriendlyName when present; fall back to DeviceDesc.
-                    return deviceDesc;
+                    return friendlyName ?? deviceDesc;
                 }
             }
             catch
             {
-                // Match presence-check behavior: treat interop failure as "unknown".
+                // Ignore
             }
 
             return null;
         }
 
-        public static async Task<bool> EnsureDriverInstalledAsync(
-            string infPath,
-            CancellationToken cancellationToken = default)
+        public static async Task<bool> EnsureDriverInstalledAsync(string infPath, CancellationToken cancellationToken = default)
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                return false;
-            }
+            if (!OperatingSystem.IsWindows()) return false;
+            if (!File.Exists(infPath)) throw new FileNotFoundException("Driver INF not found.", infPath);
 
-            if (!File.Exists(infPath))
-            {
-                throw new FileNotFoundException("Driver INF not found.", infPath);
-            }
-
-            // Requires admin. If not elevated, pnputil will fail (access denied).
             var psi = new ProcessStartInfo
             {
                 FileName = "pnputil.exe",
@@ -265,32 +261,23 @@ namespace WireView2.Device
                 Verb = "runas"
             };
 
-            using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start pnputil.exe.");
-
-            while (!proc.HasExited)
+            try
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                await Task.Delay(100, cancellationToken).ConfigureAwait(false);
+                using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start pnputil.exe.");
+                await proc.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+                return proc.ExitCode == 0;
             }
-
-            return proc.ExitCode == 0;
-        }
-
-        public static async Task<bool> IsDriverInfInstalledAsync(
-            string infPath,
-            CancellationToken cancellationToken = default)
-        {
-            if (!OperatingSystem.IsWindows())
+            catch (Win32Exception)
             {
                 return false;
             }
+        }
 
-            if (!File.Exists(infPath))
-            {
-                throw new FileNotFoundException("Driver INF not found.", infPath);
-            }
+        public static async Task<bool> IsDriverInfInstalledAsync(string infPath, CancellationToken cancellationToken = default)
+        {
+            if (!OperatingSystem.IsWindows()) return false;
+            if (!File.Exists(infPath)) throw new FileNotFoundException("Driver INF not found.", infPath);
 
-            // Does not require admin
             var psi = new ProcessStartInfo
             {
                 FileName = "pnputil.exe",
@@ -301,13 +288,9 @@ namespace WireView2.Device
             };
 
             using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start pnputil.exe.");
-            string output = await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
-
-            while (!proc.HasExited)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                await Task.Delay(50, cancellationToken).ConfigureAwait(false);
-            }
+            string output = await proc.StandardOutput.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+            
+            await proc.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
 
             if (proc.ExitCode != 0)
             {
@@ -323,10 +306,7 @@ namespace WireView2.Device
 
         public static async Task<bool> RemoveDriverByOriginalInfNameIfPresentAsync(string originalInfFileName, CancellationToken cancellationToken = default)
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                return false;
-            }
+            if (!OperatingSystem.IsWindows()) return false;
 
             var publishedNames = await FindPublishedOemInfNamesByOriginalInfAsync(originalInfFileName, cancellationToken).ConfigureAwait(false);
             if (publishedNames.Count == 0)
@@ -348,10 +328,7 @@ namespace WireView2.Device
 
         private static async Task<bool> IsPnpDriverInstalledAsync(string infFileName, CancellationToken cancellationToken)
         {
-            if (!OperatingSystem.IsWindows())
-            {
-                return false;
-            }
+            if (!OperatingSystem.IsWindows()) return false;
 
             var psi = new ProcessStartInfo
             {
@@ -363,13 +340,9 @@ namespace WireView2.Device
             };
 
             using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start pnputil.exe.");
-            string output = await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
-
-            while (!proc.HasExited)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                await Task.Delay(50, cancellationToken).ConfigureAwait(false);
-            }
+            string output = await proc.StandardOutput.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+            
+            await proc.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
 
             if (proc.ExitCode != 0)
             {
@@ -391,73 +364,43 @@ namespace WireView2.Device
             };
 
             using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start pnputil.exe.");
-            string output = await proc.StandardOutput.ReadToEndAsync().ConfigureAwait(false);
-
-            while (!proc.HasExited)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                await Task.Delay(50, cancellationToken).ConfigureAwait(false);
-            }
+            string output = await proc.StandardOutput.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+            
+            await proc.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
 
             if (proc.ExitCode != 0)
             {
                 throw new InvalidOperationException($"Driver enumeration failed with exit code {proc.ExitCode}.");
             }
 
-            // pnputil output includes blocks like:
-            //   Published Name : oemXX.inf
-            //   Original Name  : guistdfudev.inf
             var lines = output.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
-
-            string? published = null;
+            string? lastOemInf = null;
             var results = new List<string>();
 
             foreach (var rawLine in lines)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-
                 var line = rawLine.Trim();
 
-                const string publishedPrefix = "Published Name";
-                const string originalPrefix = "Original Name";
-
-                if (line.StartsWith(publishedPrefix, StringComparison.OrdinalIgnoreCase))
+                // FIX: Searches language-independently for oemXX.inf
+                var oemMatch = Regex.Match(line, @"oem\d+\.inf", RegexOptions.IgnoreCase);
+                if (oemMatch.Success)
                 {
-                    published = ExtractPnputilValue(line);
-                    continue;
+                    lastOemInf = oemMatch.Value;
                 }
 
-                if (line.StartsWith(originalPrefix, StringComparison.OrdinalIgnoreCase))
+                if (line.Contains(originalInfFileName, StringComparison.OrdinalIgnoreCase) && lastOemInf != null)
                 {
-                    var original = ExtractPnputilValue(line);
-                    if (published is not null &&
-                        original is not null &&
-                        original.Equals(originalInfFileName, StringComparison.OrdinalIgnoreCase))
-                    {
-                        results.Add(published);
-                    }
-
-                    published = null;
+                    results.Add(lastOemInf);
+                    lastOemInf = null; // Reset for the next match
                 }
             }
 
             return results;
         }
 
-        private static string? ExtractPnputilValue(string line)
-        {
-            int idx = line.IndexOf(':');
-            if (idx < 0 || idx == line.Length - 1)
-            {
-                return null;
-            }
-
-            return line[(idx + 1)..].Trim();
-        }
-
         private static async Task<bool> DeleteDriverByPublishedNameAsync(string publishedInfName, CancellationToken cancellationToken)
         {
-            // Typically requires admin; if not elevated, pnputil will fail (access denied).
             var psi = new ProcessStartInfo
             {
                 FileName = "pnputil.exe",
@@ -467,15 +410,17 @@ namespace WireView2.Device
                 Verb = "runas",
             };
 
-            using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start pnputil.exe.");
-
-            while (!proc.HasExited)
+            try
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                await Task.Delay(100, cancellationToken).ConfigureAwait(false);
+                using var proc = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start pnputil.exe.");
+                await proc.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+                return proc.ExitCode == 0;
             }
-
-            return proc.ExitCode == 0;
+            catch (Win32Exception)
+            {
+                // FIX: Prevents crash if the user clicks "No" in the UAC prompt
+                return false;
+            }
         }
     }
 }

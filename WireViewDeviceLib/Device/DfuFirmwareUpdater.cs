@@ -1,5 +1,10 @@
+using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Win32.SafeHandles;
 
 namespace WireView2.Device
@@ -9,10 +14,26 @@ namespace WireView2.Device
         public const int DfuVid = 0x0483;
         public const int DfuPid = 0xDF11;
 
-        public static async Task UpdateAsync(Stream firmwareImage)
+        public static async Task UpdateAsync(Stream firmwareImage, CancellationToken cancellationToken = default)
         {
+            // --- NEW: Automatic driver cleanup before flashing ---
+            bool driverRemoved = await DfuHelper.RemoveGuiStDfuDevDriverIfPresentAsync(cancellationToken).ConfigureAwait(false);
+            if (driverRemoved)
+            {
+                // Short pause to allow Windows to reload the standard WinUSB driver
+                await Task.Delay(2000, cancellationToken).ConfigureAwait(false);
+            }
+
+            // Ensure that the WinUSB interface is now available (Waits up to 10 seconds)
+            bool isWinUsbReady = await DfuHelper.WaitForWinUsbDeviceAsync(DfuVid, DfuPid, TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+            if (!isWinUsbReady)
+            {
+                throw new InvalidOperationException("The DFU device could not be reached in WinUSB mode. Please check the connection or existing drivers.");
+            }
+            // -------------------------------------------------------------
+
             using var ms = new MemoryStream();
-            await firmwareImage.CopyToAsync(ms).ConfigureAwait(false);
+            await firmwareImage.CopyToAsync(ms, cancellationToken).ConfigureAwait(false);
             var payload = ms.ToArray();
 
             // Open DFU
@@ -23,7 +44,7 @@ namespace WireView2.Device
             // Parse ELF or program as BIN
             if (Elf32Image.TryParse(payload, out var elf))
             {
-                await dfu.ClearStatusIfErrorAsync().ConfigureAwait(false);
+                await dfu.ClearStatusIfErrorAsync(cancellationToken).ConfigureAwait(false);
 
                 ushort blockNum = 2;
                 foreach (var seg in elf.Segments)
@@ -33,7 +54,7 @@ namespace WireView2.Device
                         continue;
                     }
 
-                    await dfu.SetAddressPointerAsync(seg.Address).ConfigureAwait(false);
+                    await dfu.SetAddressPointerAsync(seg.Address, cancellationToken).ConfigureAwait(false);
 
                     int offset = 0;
                     while (offset < seg.Data.Length)
@@ -43,7 +64,7 @@ namespace WireView2.Device
                         Buffer.BlockCopy(seg.Data, offset, chunk, 0, len);
 
                         await dfu.DownloadAsync(blockNum, chunk).ConfigureAwait(false);
-                        await dfu.PollUntilReadyAsync().ConfigureAwait(false);
+                        await dfu.PollUntilReadyAsync(cancellationToken).ConfigureAwait(false);
 
                         offset += len;
                         blockNum++;
@@ -51,13 +72,13 @@ namespace WireView2.Device
                 }
 
                 await dfu.DownloadAsync(0, Array.Empty<byte>()).ConfigureAwait(false);
-                await dfu.PollUntilReadyAsync().ConfigureAwait(false);
+                await dfu.PollUntilReadyAsync(cancellationToken).ConfigureAwait(false);
             }
             else
             {
                 const uint baseAddr = 0x08000000;
-                await dfu.ClearStatusIfErrorAsync().ConfigureAwait(false);
-                await dfu.SetAddressPointerAsync(baseAddr).ConfigureAwait(false);
+                await dfu.ClearStatusIfErrorAsync(cancellationToken).ConfigureAwait(false);
+                await dfu.SetAddressPointerAsync(baseAddr, cancellationToken).ConfigureAwait(false);
 
                 ushort blockNum = 2;
                 int offset = 0;
@@ -68,14 +89,14 @@ namespace WireView2.Device
                     Buffer.BlockCopy(payload, offset, chunk, 0, len);
 
                     await dfu.DownloadAsync(blockNum, chunk).ConfigureAwait(false);
-                    await dfu.PollUntilReadyAsync().ConfigureAwait(false);
+                    await dfu.PollUntilReadyAsync(cancellationToken).ConfigureAwait(false);
 
                     offset += len;
                     blockNum++;
                 }
 
                 await dfu.DownloadAsync(0, Array.Empty<byte>()).ConfigureAwait(false);
-                await dfu.PollUntilReadyAsync().ConfigureAwait(false);
+                await dfu.PollUntilReadyAsync(cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -94,54 +115,36 @@ namespace WireView2.Device
             {
                 image = new Elf32Image();
 
-                if (file.Length < 52)
-                {
-                    return false;
-                }
+                if (file.Length < 52) return false;
 
                 if (!(file[0] == 0x7F && file[1] == (byte)'E' && file[2] == (byte)'L' && file[3] == (byte)'F'))
                 {
                     return false;
                 }
 
-                if (file[4] != 1 || file[5] != 1)
-                {
-                    return false;
-                }
+                if (file[4] != 1 || file[5] != 1) return false;
 
                 ushort e_phentsize = ReadU16(file, 42);
                 ushort e_phnum = ReadU16(file, 44);
                 uint e_phoff = ReadU32(file, 28);
 
-                if (e_phentsize < 32 || e_phnum == 0)
-                {
-                    return false;
-                }
+                if (e_phentsize < 32 || e_phnum == 0) return false;
 
                 for (int i = 0; i < e_phnum; i++)
                 {
                     int off = checked((int)(e_phoff + (uint)(i * e_phentsize)));
-                    if (off + e_phentsize > file.Length)
-                    {
-                        break;
-                    }
+                    if (off + e_phentsize > file.Length) break;
 
                     uint p_type = ReadU32(file, off + 0);
                     const uint PT_LOAD = 1;
-                    if (p_type != PT_LOAD)
-                    {
-                        continue;
-                    }
+                    if (p_type != PT_LOAD) continue;
 
                     uint p_offset = ReadU32(file, off + 4);
                     uint p_vaddr = ReadU32(file, off + 8);
                     uint p_paddr = ReadU32(file, off + 12);
                     uint p_filesz = ReadU32(file, off + 16);
 
-                    if (p_filesz == 0)
-                    {
-                        continue;
-                    }
+                    if (p_filesz == 0) continue;
 
                     if (p_offset + p_filesz > file.Length)
                     {
@@ -190,25 +193,16 @@ namespace WireView2.Device
             public static bool IsExpectedDfuDeviceName(ushort vid, ushort pid, out string? actualName)
             {
                 actualName = TryGetConnectedDeviceDescription(vid, pid);
-                if (string.IsNullOrWhiteSpace(actualName))
-                {
-                    return false;
-                }
+                if (string.IsNullOrWhiteSpace(actualName)) return false;
 
                 return actualName.Equals(ExpectedDfuDeviceDescription, StringComparison.OrdinalIgnoreCase);
             }
 
             public static Task<bool> EnsureWinUsbDriverInstalledAsync(
-                ushort vid,
-                ushort pid,
-                string infPath,
-                TimeSpan postInstallWait,
-                CancellationToken cancellationToken = default) =>
+                ushort vid, ushort pid, string infPath, TimeSpan postInstallWait, CancellationToken cancellationToken = default) =>
                 WindowsDriverHelper.EnsureDriverInstalledAsync(infPath, cancellationToken);
 
-            public static Task<bool> IsWinUsbDriverInstalledAsync(
-                string infPath,
-                CancellationToken cancellationToken = default) =>
+            public static Task<bool> IsWinUsbDriverInstalledAsync(string infPath, CancellationToken cancellationToken = default) =>
                 WindowsDriverHelper.IsDriverInfInstalledAsync(infPath, cancellationToken);
 
             public static Task<bool> IsGuiStDfuDevDriverInstalledAsync(CancellationToken cancellationToken = default) =>
@@ -276,18 +270,18 @@ namespace WireView2.Device
                 return null;
             }
 
-            public async Task ClearStatusIfErrorAsync()
+            public async Task ClearStatusIfErrorAsync(CancellationToken cancellationToken = default)
             {
                 var st = GetStatus();
                 if (st.bState == DfuState.dfuERROR)
                 {
                     _usb.ControlOut(DIR_HOST_TO_DEVICE | TYPE_CLASS | RECIP_INTERFACE,
                         DFU_CLRSTATUS, 0, _ifIndex, null, 0);
-                    await Task.Delay(1).ConfigureAwait(false);
+                    await Task.Delay(1, cancellationToken).ConfigureAwait(false);
                 }
             }
 
-            public async Task SetAddressPointerAsync(uint address)
+            public async Task SetAddressPointerAsync(uint address, CancellationToken cancellationToken = default)
             {
                 var payload = new byte[5];
                 payload[0] = ST_DFU_SET_ADDRESS_POINTER;
@@ -297,7 +291,7 @@ namespace WireView2.Device
                 payload[4] = (byte)(address >> 24 & 0xFF);
 
                 Download(0, payload);
-                await PollUntilReadyAsync().ConfigureAwait(false);
+                await PollUntilReadyAsync(cancellationToken).ConfigureAwait(false);
             }
 
             public Task DownloadAsync(ushort blockNum, byte[] data)
@@ -312,10 +306,12 @@ namespace WireView2.Device
                     DFU_DNLOAD, blockNum, _ifIndex, data, data?.Length ?? 0);
             }
 
-            public async Task PollUntilReadyAsync()
+            public async Task PollUntilReadyAsync(CancellationToken cancellationToken = default)
             {
                 while (true)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    
                     var st = GetStatus();
                     if (st.bStatus != 0)
                     {
@@ -327,7 +323,7 @@ namespace WireView2.Device
 
                     if (state == DfuState.dfuDNBUSY || state == DfuState.dfuMANIFEST)
                     {
-                        await Task.Delay(Math.Min(wait, 1000)).ConfigureAwait(false);
+                        await Task.Delay(Math.Min(wait, 1000), cancellationToken).ConfigureAwait(false);
                         continue;
                     }
 
@@ -337,7 +333,7 @@ namespace WireView2.Device
                         return;
                     }
 
-                    await Task.Delay(Math.Min(Math.Max(wait, 1), 100)).ConfigureAwait(false);
+                    await Task.Delay(Math.Min(Math.Max(wait, 1), 100), cancellationToken).ConfigureAwait(false);
                 }
             }
 
@@ -391,7 +387,6 @@ namespace WireView2.Device
             public ushort bcdDFUVersion;
         }
 
-        // Minimal WinUSB wrapper + SetupAPI enumeration
         private sealed class WinUsbDevice : IDisposable
         {
             internal static readonly Guid GUID_DEVINTERFACE_WINUSB = new("dee824ef-729b-4a0e-9c14-b7117d33a817");
