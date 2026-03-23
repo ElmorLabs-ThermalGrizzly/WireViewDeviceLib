@@ -134,7 +134,8 @@ public partial class WireViewPro2Device
 
                 try
                 {
-                    while (read < len)
+                    int retries = 10;
+                    while (read < len && retries > 0)
                     {
                         uint remaining = len - read;
                         uint toRead = (uint)Math.Min(SpiFlashMaxReadLen, remaining);
@@ -145,8 +146,11 @@ public partial class WireViewPro2Device
                         _port!.Write(frame, 0, frame.Length);
                         var chunk = ReadExact((int)toRead);
 
-                        if (chunk is null || chunk.Length != toRead)
-                            throw new TimeoutException("SPI flash read error.");
+                        if (chunk is null || chunk.Length != toRead) {
+                            retries--;
+                            Thread.Sleep(10);
+                            continue;
+                        }
 
                         Buffer.BlockCopy(chunk, 0, result, (int)read, (int)toRead);
 
