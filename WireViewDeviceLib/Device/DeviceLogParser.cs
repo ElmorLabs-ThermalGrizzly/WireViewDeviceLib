@@ -112,8 +112,11 @@ public static class DeviceLogParser
 
                 switch (type)
                 {
-                    case ENTRY_TYPE.ENTRY_TYPE_MCU_TICK:
                     case ENTRY_TYPE.ENTRY_TYPE_POWER_ON:
+                        firstEntryFound = true;
+                        index++;
+                        break;
+                    case ENTRY_TYPE.ENTRY_TYPE_MCU_TICK:
                     {
                         var entry = WireViewPro2Device.BytesToStruct<DATALOGGER_Entry>(entryBytes.ToArray());
                         if (entry.HpwrSense > 3)
@@ -121,9 +124,19 @@ public static class DeviceLogParser
                             index++;
                             break;
                         }
-                        results.Add(entry);
                         firstEntryFound = true;
                         index++;
+                        // Ignore readings where voltage sum is less than 60 and more than 900 (1.0V to 12.0V * 6 channels in 100mV units)
+                        int voltageSum = 0;
+                        for(int i = 0; i < SENSOR_POWER_NUM; i++)
+                        {
+                            voltageSum += entry.Voltage[i];
+                        }
+
+                        if(voltageSum > 60 && voltageSum < 900)
+                        {
+                            results.Add(entry);
+                        }
                         break;
                     }
                     default:
