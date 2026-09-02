@@ -13,7 +13,7 @@ namespace WireView2.Device
         private CancellationTokenSource? _cts;
         private Task? _worker;
 
-        private WireViewPro2Device? _device;
+        private IWireViewDevice? _device;
         private int _pollMs = 1000;
 
         public event EventHandler<bool>? ConnectionChanged; // true=connected
@@ -54,7 +54,7 @@ namespace WireView2.Device
             _pollMs = Math.Clamp(ms, 50, 5000);
             lock (_gate)
             {
-                if (_device != null) _device.PollIntervalMs = _pollMs;
+                if (_device is WireViewPro2Device pro2Device) pro2Device.PollIntervalMs = _pollMs;
             }
         }
 
@@ -97,35 +97,82 @@ namespace WireView2.Device
                 }
 
                 // Try connect to all matching ports
-                foreach(var port in ports) { 
-
-                    var dev = new WireViewPro2Device(port)
-                    {
-                        PollIntervalMs = _pollMs
-                    };
+                foreach (var port in ports)
+                {
+                    var basicDevice = new WireViewBasicDevice(port);
                     try
                     {
-                        dev.Connect();
-                        if (dev.Connected)
+                        basicDevice.Connect();
+                        if (basicDevice.Connected)
                         {
-                            // success
-                            _device = dev;
-                            dev.ConnectionChanged += OnDeviceConnectionChanged;
-                            _dataForwardHandler ??= (_, d) => DataUpdated?.Invoke(this, d);
-                            dev.DataUpdated += _dataForwardHandler;
-                            ConnectionChanged?.Invoke(this, true);
-                            return;
+                            basicDevice.Disconnect();
+
+                            IWireViewDevice? candidateDevice = null;
+
+                            // Check if device matches any subtype
+                            if (basicDevice.VendorId == 0xEF && basicDevice.ProductId == 0x05)
+                            {
+                                // WireView Pro II
+                                candidateDevice = new WireViewPro2Device(port)
+                                {
+                                    PollIntervalMs = _pollMs
+                                };
+                            }
+                            else if (basicDevice.VendorId == 0xEF && basicDevice.ProductId == 0x06)
+                            {
+                                // WireView Pro II Noctua Edition
+                                candidateDevice = new WireViewPro2NoctuaDevice(port)
+                                {
+                                    PollIntervalMs = _pollMs
+                                };
+                            }
+
+                            basicDevice.Dispose();
+
+                            if (candidateDevice == null)
+                            {
+                                continue;
+                            }
+
+                            _device = candidateDevice;
+                            _device.Connect();
+
+                            if (_device.Connected)
+                            {
+                                _device.ConnectionChanged += OnDeviceConnectionChanged;
+                                _dataForwardHandler ??= (_, d) => DataUpdated?.Invoke(this, d);
+                                _device.DataUpdated += _dataForwardHandler;
+                                ConnectionChanged?.Invoke(this, true);
+                                return;
+                            }
+
+                            _device.Disconnect();
+                            if (_device is WireViewPro2Device pro2Device)
+                            {
+                                pro2Device.Dispose();
+                            }
+                            else if (_device is WireViewPro2NoctuaDevice noctuaPro2Device)
+                            {
+                                noctuaPro2Device.Dispose();
+                            }
+                            else if (_device is WireViewBasicDevice connectedBasicDevice)
+                            {
+                                connectedBasicDevice.Dispose();
+                            }
+
+                            _device = null;
+                            continue;
                         }
                         else
                         {
-                            dev.Dispose();
+                            basicDevice.Dispose();
                         }
                     }
                     catch
                     {
                         try
                         {
-                            dev.Dispose();
+                            basicDevice.Dispose();
                         }
                         catch
                         {
@@ -158,7 +205,17 @@ namespace WireView2.Device
                         _device.DataUpdated -= _dataForwardHandler;
 
                     _device.Disconnect();
-                    _device.Dispose();
+                    if(_device is WireViewPro2Device pro2Device)
+                    {
+                        pro2Device.Dispose();
+                    } else if(_device is WireViewPro2NoctuaDevice noctuaPro2Device)
+                    {
+                        noctuaPro2Device.Dispose();
+                    } else if (_device is WireViewBasicDevice basicDevice)
+                    {
+                        basicDevice.Dispose();
+                    }
+                    _device = null;
                 }
             }
             catch { }

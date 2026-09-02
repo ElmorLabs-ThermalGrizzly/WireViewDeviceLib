@@ -8,7 +8,11 @@ namespace WireView2.Device
 
     public partial class WireViewPro2Device : IWireViewDevice, IDisposable
     {
-        public const string WelcomeMessage = "Thermal Grizzly WireView Pro II";
+        public string WelcomeMessage { get; private set; }
+
+        private int VendorId;
+        private int ProductId;
+
         private readonly string _portName;
         private readonly int _baud;
         private SerialPort? _port;
@@ -19,7 +23,7 @@ namespace WireView2.Device
         public event EventHandler<bool>? ConnectionChanged;
 
         public bool Connected { get; private set; }
-        public string DeviceName => "WireView Pro II";
+        public string DeviceName { get; private set; }
         public string HardwareRevision { get; private set; } = string.Empty;
         public string FirmwareVersion { get; private set; } = string.Empty;
         public string UniqueId { get; private set; } = string.Empty;
@@ -33,10 +37,14 @@ namespace WireView2.Device
             set => _pollIntervalMs = Math.Max(100, Math.Min(5000, value));
         }
 
-        public WireViewPro2Device(string portName, int baud = 115200)
+        public WireViewPro2Device(string portName, int baud = 115200, string welcomeMessage = "Thermal Grizzly WireView Pro II", string deviceName = "WireView Pro II", int vendorId = 0xEF, int productId = 0x05)
         {
             _portName = portName;
             _baud = baud;
+            WelcomeMessage = welcomeMessage;
+            DeviceName = deviceName;
+            VendorId = vendorId;
+            ProductId = productId;
         }
 
         public void Connect()
@@ -55,7 +63,7 @@ namespace WireView2.Device
             }
 
             var vd = ReadVendorData();
-            if (vd != null && vd.Value.VendorId == 0xEF && vd.Value.ProductId == 0x05)
+            if (vd != null && vd.Value.VendorId == VendorId && vd.Value.ProductId == ProductId)
             {
                 HardwareRevision = $"{vd.Value.VendorId:X2}{vd.Value.ProductId:X2}";
                 FirmwareVersion = vd.Value.FwVersion.ToString();
