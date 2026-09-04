@@ -110,23 +110,41 @@ namespace WireView2.Device
                             IWireViewDevice? candidateDevice = null;
 
                             // Check if device matches any subtype
-                            if (basicDevice.VendorId == 0xEF && basicDevice.ProductId == 0x05)
+                            if(basicDevice.VendorId == 0xEF)
                             {
-                                // WireView Pro II
-                                candidateDevice = new WireViewPro2Device(port)
+                                switch(basicDevice.ProductId)
                                 {
-                                    PollIntervalMs = _pollMs
-                                };
+                                    case 0x05:
+                                        // WireView Pro II
+                                        candidateDevice = new WireViewPro2Device(port)
+                                        {
+                                            PollIntervalMs = _pollMs
+                                        };
+                                        break;
+                                    case 0x06:
+                                        // WireView Pro II Noctua Edition
+                                        candidateDevice = new WireViewPro2NoctuaDevice(port)
+                                        {
+                                            PollIntervalMs = _pollMs
+                                        };
+                                        break;
+                                    case 0x07:
+                                        // WireView II
+                                        candidateDevice = new WireView2Device(port)
+                                        {
+                                            PollIntervalMs = _pollMs
+                                        };
+                                        break;
+                                    case 0x08:
+                                        // WireView II Phanteks Edition
+                                        candidateDevice = new WireView2PhanteksDevice(port)
+                                        {
+                                            PollIntervalMs = _pollMs
+                                        };
+                                        break;
+                                }
                             }
-                            else if (basicDevice.VendorId == 0xEF && basicDevice.ProductId == 0x06)
-                            {
-                                // WireView Pro II Noctua Edition
-                                candidateDevice = new WireViewPro2NoctuaDevice(port)
-                                {
-                                    PollIntervalMs = _pollMs
-                                };
-                            }
-
+                            
                             basicDevice.Dispose();
 
                             if (candidateDevice == null)
@@ -147,17 +165,8 @@ namespace WireView2.Device
                             }
 
                             _device.Disconnect();
-                            if (_device is WireViewPro2Device pro2Device)
-                            {
-                                pro2Device.Dispose();
-                            }
-                            else if (_device is WireViewPro2NoctuaDevice noctuaPro2Device)
-                            {
-                                noctuaPro2Device.Dispose();
-                            }
-                            else if (_device is WireViewBasicDevice connectedBasicDevice)
-                            {
-                                connectedBasicDevice.Dispose();
+                            if (_device is IDisposable disposableDevice) {
+                                disposableDevice.Dispose();
                             }
 
                             _device = null;

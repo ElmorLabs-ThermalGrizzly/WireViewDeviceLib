@@ -59,7 +59,7 @@ namespace WireView2.Device
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 4)]
-        private struct PowerSensor
+        public struct PowerSensor
         {
             public short Voltage;
             public uint Current;
@@ -67,7 +67,7 @@ namespace WireView2.Device
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 4)]
-        private struct SensorStruct
+        public struct SensorStruct
         {
             [MarshalAs(UnmanagedType.ByValArray, SizeConst = 4)]
             public short[] Ts; // 0.1 °C
@@ -85,7 +85,7 @@ namespace WireView2.Device
             public ushort FaultLog;
         }
 
-        private enum HpwrCapability : byte
+        public enum HpwrCapability : byte
         {
             PSU_CAP_600W = 0,
             PSU_CAP_450W = 1,
