@@ -222,20 +222,28 @@ namespace WireView2.Device
             SendData(new[] { (byte)UsbCmd.CMD_CLEAR_FAULTS, (byte)(faultStatusMask & 0xFF), (byte)((faultStatusMask >> 8) & 0xFF), (byte)(faultLogMask & 0xFF), (byte)((faultLogMask >> 8) & 0xFF) }, 0);
         }
 
-        private void PollLoop(CancellationToken ct)
+        private async Task PollLoop(CancellationToken ct)
         {
             try
             {
                 while (!ct.IsCancellationRequested)
                 {
+                    var startedAt = Environment.TickCount64;
+
                     var sensors = ReadSensorValues();
                     if (sensors != null)
                     {
                         var d = MapSensorStruct(sensors.Value);
                         DataUpdated?.Invoke(this, d);
                     }
-                    Thread.Sleep(_pollIntervalMs);
+
+                    // Subtract the read time so the cadence stays fixed rather than drifting by it.
+                    var elapsed = Environment.TickCount64 - startedAt;
+                    await Task.Delay((int)Math.Max(0, _pollIntervalMs - elapsed), ct).ConfigureAwait(false);
                 }
+            }
+            catch (OperationCanceledException)
+            {
             }
             catch (Exception)
             {
