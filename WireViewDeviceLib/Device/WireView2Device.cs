@@ -13,6 +13,8 @@ namespace WireView2.Device
         private int VendorId;
         private int ProductId;
 
+        private static readonly int SensorStructSize = Marshal.SizeOf<SensorStruct>();
+
         private readonly string _portName;
         private readonly int _baud;
         private SerialPort? _port;
@@ -289,9 +291,7 @@ namespace WireView2.Device
         {
             if (_port == null) return null;
 
-            var size = Marshal.SizeOf<SensorStruct>();
-
-            byte[]? buf = SendCmd(UsbCmd.CMD_READ_SENSOR_VALUES, size);
+            byte[]? buf = SendCmd(UsbCmd.CMD_READ_SENSOR_VALUES, SensorStructSize);
 
             if (buf == null) return null;
             return BytesToStruct<SensorStruct>(buf);
