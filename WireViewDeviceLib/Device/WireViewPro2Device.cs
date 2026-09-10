@@ -407,10 +407,19 @@ namespace WireView2.Device
 
             while (offset < size && Environment.TickCount64 - start < timeout)
             {
-                if (_port!.BytesToRead > 0)
+                int read;
+                try
                 {
-                    offset += _port!.Read(buf, offset, size - offset);
+                    // Blocking read; spinning on BytesToRead would pin a core for the whole transfer.
+                    read = _port!.Read(buf, offset, size - offset);
                 }
+                catch (TimeoutException)
+                {
+                    break;
+                }
+
+                if (read <= 0) break;
+                offset += read;
             }
             return offset == size ? buf : null;
         }

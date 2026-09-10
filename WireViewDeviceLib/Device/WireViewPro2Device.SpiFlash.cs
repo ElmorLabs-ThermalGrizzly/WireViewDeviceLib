@@ -317,18 +317,36 @@ public partial class WireViewPro2Device
 
     private bool SpiFlashReadResult(uint timeoutMs)
     {
-        int result = 0;
-        DateTime startTime = DateTime.UtcNow;
+        var deadline = Environment.TickCount64 + timeoutMs;
+        var previousTimeout = _port!.ReadTimeout;
+        var buffer = new byte[1];
 
-        while (result == 0 && DateTime.UtcNow < startTime.AddMilliseconds(timeoutMs))
+        try
         {
-            if (_port!.BytesToRead > 0)
+            while (Environment.TickCount64 < deadline)
             {
-                byte[] buffer = new byte[1];
-                _port!.Read(buffer, 0, 1);
-                result = buffer[0];
+                // Blocking read; spinning on BytesToRead would pin a core for the whole flash operation.
+                _port!.ReadTimeout = (int)Math.Max(1, deadline - Environment.TickCount64);
+
+                int read;
+                try
+                {
+                    read = _port!.Read(buffer, 0, 1);
+                }
+                catch (TimeoutException)
+                {
+                    break;
+                }
+
+                if (read <= 0) break;
+                if (buffer[0] != 0) return buffer[0] == 1;
             }
         }
-        return result == 1;
+        finally
+        {
+            _port!.ReadTimeout = previousTimeout;
+        }
+
+        return false;
     }
 }
