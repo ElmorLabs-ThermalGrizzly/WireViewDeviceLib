@@ -34,7 +34,9 @@ namespace WireView2.Device
         private enum SensorTs
         {
             SENSOR_TS1,
-            SENSOR_TS2
+            SENSOR_TS2,
+            SENSOR_RSVD1,
+            SENSOR_RSVD2
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 4)]
@@ -67,9 +69,11 @@ namespace WireView2.Device
         [StructLayout(LayoutKind.Sequential, Pack = 4)]
         private struct SensorStruct
         {
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 2)]
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 4)]
             public short[] Ts; // 0.1 °C
             public ushort Vdd; // mV
+            public byte FanDuty; // %
+            public ushort FanTach; // RPM
 
             [MarshalAs(UnmanagedType.ByValArray, SizeConst = 6)]
             public PowerSensor[] PowerReadings;
