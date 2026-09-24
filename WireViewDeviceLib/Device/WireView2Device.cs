@@ -233,11 +233,15 @@ namespace WireView2.Device
                     var startedAt = Environment.TickCount64;
 
                     var sensors = ReadSensorValues();
-                    if (sensors != null)
+                    if (sensors == null)
                     {
-                        var d = MapSensorStruct(sensors.Value);
-                        DataUpdated?.Invoke(this, d);
+                        // No response (e.g. device unplugged): treat as disconnected.
+                        Disconnect();
+                        return;
                     }
+
+                    var d = MapSensorStruct(sensors.Value);
+                    DataUpdated?.Invoke(this, d);
 
                     // Subtract the read time so the cadence stays fixed rather than drifting by it.
                     var elapsed = Environment.TickCount64 - startedAt;
