@@ -55,6 +55,7 @@ namespace WireView2.Device
             lock (_gate)
             {
                 if (_device is WireViewPro2Device pro2Device) pro2Device.PollIntervalMs = _pollMs;
+                else if (_device is WireView2Device wireView2Device) wireView2Device.PollIntervalMs = _pollMs;
             }
         }
 
