@@ -7,11 +7,20 @@
         string HardwareRevision { get; }
         string FirmwareVersion { get; }
         string UniqueId { get; }
+        PowerControlType PowerControl { get; }
 
         void Connect();
         void Disconnect();
         event EventHandler<DeviceData>? DataUpdated;
         event EventHandler<bool>? ConnectionChanged;
+    }
+
+    // How the device acts on the system when a fault is configured to power down
+    public enum PowerControlType
+    {
+        None,        // No power control
+        PowerButton, // Short/long press of the system power button (soft/hard power)
+        GpuSenseCut  // Disconnects the 12V-2x6 sense lines, GPU loses power (hard power only)
     }
 
     public class DeviceData

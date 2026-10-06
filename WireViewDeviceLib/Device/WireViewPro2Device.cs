@@ -29,6 +29,7 @@ namespace WireView2.Device
         public string HardwareRevision { get; private set; } = string.Empty;
         public string FirmwareVersion { get; private set; } = string.Empty;
         public string UniqueId { get; private set; } = string.Empty;
+        public virtual PowerControlType PowerControl => PowerControlType.PowerButton;
 
         public int ConfigVersion { get; private set; }
 

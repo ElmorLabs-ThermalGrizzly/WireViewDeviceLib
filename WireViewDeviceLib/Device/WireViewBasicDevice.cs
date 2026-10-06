@@ -36,6 +36,7 @@ namespace WireView2.Device
         public string HardwareRevision { get; private set; } = string.Empty;
         public string FirmwareVersion { get; private set; } = string.Empty;
         public string UniqueId { get; private set; } = string.Empty;
+        public PowerControlType PowerControl => PowerControlType.None;
 
         public string PortName => _portName;
 
