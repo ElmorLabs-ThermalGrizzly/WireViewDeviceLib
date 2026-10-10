@@ -251,6 +251,14 @@ namespace WireView2.Device
             return true;
         }
 
+        /// <summary>Sends CMD_DEVICE_CMD with a device specific command byte (for example 0xA0 for the buzzer test).</summary>
+        public bool DeviceCmd(byte cmd)
+        {
+            if (!Connected || _port == null) return false;
+            SendData(new[] { (byte)UsbCmd.CMD_DEVICE_CMD, cmd }, 0);
+            return true;
+        }
+
         public void ClearFaults(int faultStatusMask = 0xFFFF, int faultLogMask = 0xFFFF)
         {
             if (!Connected || _port == null) return;
