@@ -41,7 +41,7 @@ namespace WireView2.Device
         public int PollIntervalMs
         {
             get => _pollIntervalMs;
-            set => _pollIntervalMs = Math.Max(100, Math.Min(5000, value));
+            set => _pollIntervalMs = Math.Max(10, Math.Min(5000, value));
         }
 
         public WireView2Device(string portName, int baud = 115200, string welcomeMessage = "Thermal Grizzly WireView II", string deviceName = "WireView II", int vendorId = 0xEF, int productId = 0x07)
