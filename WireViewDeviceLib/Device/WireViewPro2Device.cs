@@ -17,6 +17,8 @@ namespace WireView2.Device
 
         private readonly string _portName;
         private readonly int _baud;
+
+        public string PortName => _portName;
         private SerialPort? _port;
         private CancellationTokenSource? _cts;
         private Task? _worker;
@@ -30,6 +32,9 @@ namespace WireView2.Device
         public string FirmwareVersion { get; private set; } = string.Empty;
         public string UniqueId { get; private set; } = string.Empty;
         public virtual PowerControlType PowerControl => PowerControlType.PowerButton;
+        public Guid Uid { get; private set; } = Guid.Empty;
+
+        public DeviceData? LastDeviceData { get; private set; }
 
         public int ConfigVersion { get; private set; }
 
@@ -81,7 +86,19 @@ namespace WireView2.Device
 
                 ConfigVersion = configVersion.Value;
 
-                UniqueId = ReadUid() ?? string.Empty;
+                var uidBytes = ReadUidBytes();
+                if (uidBytes != null)
+                {
+                    UniqueId = BitConverter.ToString(uidBytes).Replace("-", string.Empty);
+                    var guidBytes = uidBytes;
+                    Array.Resize(ref guidBytes, 16);
+                    Uid = new Guid(guidBytes);
+                }
+                else
+                {
+                    UniqueId = string.Empty;
+                    Uid = Guid.Empty;
+                }
 
                 // Enable display updates just in case
                 ScreenCmd(SCREEN_CMD.SCREEN_RESUME_UPDATES);
@@ -117,6 +134,8 @@ namespace WireView2.Device
             HardwareRevision = string.Empty;
             FirmwareVersion = string.Empty;
             UniqueId = string.Empty;
+            Uid = Guid.Empty;
+            LastDeviceData = null;
 
             ConnectionChanged?.Invoke(this, false);
         }
@@ -141,6 +160,8 @@ namespace WireView2.Device
             SendCmd(UsbCmd.CMD_BOOTLOADER);
             try { Disconnect(); } catch { }
         }
+
+        public Task EnterBootloaderAsync() => Task.Run(EnterBootloader);
 
         public DeviceConfigStructV3? ReadConfig()
         {
@@ -242,16 +263,25 @@ namespace WireView2.Device
             }
         }
 
-        public void NvmCmd(NVM_CMD cmd)
+        public bool NvmCmd(NVM_CMD cmd)
         {
-            if (!Connected || _port == null) return;
+            if (!Connected || _port == null) return false;
             SendData(new[] { (byte)UsbCmd.CMD_NVM_CONFIG, (byte)0x55, (byte)0xAA, (byte)0x55, (byte)0xAA, (byte)cmd }, 0);
+            return true;
         }
 
         public void ScreenCmd(SCREEN_CMD cmd)
         {
             if (!Connected || _port == null) return;
             SendData(new[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, (byte)cmd }, 0);
+        }
+
+        /// <summary>Raw variant for factory/test screen commands outside the public SCREEN_CMD enum.</summary>
+        public bool ScreenCmd(byte cmd)
+        {
+            if (!Connected || _port == null) return false;
+            SendData(new[] { (byte)UsbCmd.CMD_SCREEN_CHANGE, cmd }, 0);
+            return true;
         }
 
         public void ClearFaults(int faultStatusMask = 0xFFFF, int faultLogMask = 0xFFFF)
@@ -277,6 +307,7 @@ namespace WireView2.Device
                     }
 
                     var d = MapSensorStruct(sensors.Value);
+                    LastDeviceData = d;
                     DataUpdated?.Invoke(this, d);
 
                     // Subtract the read time so the cadence stays fixed rather than drifting by it.
@@ -316,15 +347,12 @@ namespace WireView2.Device
             return BytesToStruct<VendorDataStruct>(buf);
         }
 
-        private string? ReadUid()
+        private byte[]? ReadUidBytes()
         {
             if (_port == null) return null;
 
             const int uidBytes = 12;
-            byte[]? buf = SendCmd(UsbCmd.CMD_READ_UID, uidBytes);
-
-            if (buf == null) return null;
-            return BitConverter.ToString(buf).Replace("-", string.Empty);
+            return SendCmd(UsbCmd.CMD_READ_UID, uidBytes);
         }
 
         private SensorStruct? ReadSensorValues()
