@@ -6,5 +6,7 @@
 
         public override PowerControlType PowerControl => PowerControlType.GpuSenseCut;
 
+        protected override bool HasFanSensors => false;
+
     }
 }

@@ -14,6 +14,10 @@ namespace WireView2.Device
         private int ProductId;
 
         private static readonly int SensorStructSize = Marshal.SizeOf<SensorStruct>();
+        private static readonly int SensorStructNoFanSize = Marshal.SizeOf<SensorStructNoFan>();
+
+        // False for firmware that sends the compact sensor layout (SensorStructNoFan)
+        protected virtual bool HasFanSensors => true;
 
         private readonly string _portName;
         private readonly int _baud;
@@ -295,6 +299,26 @@ namespace WireView2.Device
         private SensorStruct? ReadSensorValues()
         {
             if (_port == null) return null;
+
+            if (!HasFanSensors)
+            {
+                byte[]? compactBuf = SendCmd(UsbCmd.CMD_READ_SENSOR_VALUES, SensorStructNoFanSize);
+                if (compactBuf == null) return null;
+
+                var s = BytesToStruct<SensorStructNoFan>(compactBuf);
+                return new SensorStruct
+                {
+                    Ts = new short[] { s.Ts[0], s.Ts[1], 0, 0 },
+                    Vdd = s.Vdd,
+                    PowerReadings = s.PowerReadings,
+                    TotalPower = s.TotalPower,
+                    TotalCurrent = s.TotalCurrent,
+                    AvgVoltage = s.AvgVoltage,
+                    HpwrCapability = s.HpwrCapability,
+                    FaultStatus = s.FaultStatus,
+                    FaultLog = s.FaultLog
+                };
+            }
 
             byte[]? buf = SendCmd(UsbCmd.CMD_READ_SENSOR_VALUES, SensorStructSize);
 

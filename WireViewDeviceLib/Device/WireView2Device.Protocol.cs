@@ -86,6 +86,25 @@ namespace WireView2.Device
             public ushort FaultLog;
         }
 
+        // Compact layout (96 bytes) sent by WireView II Phanteks Edition firmware: 2 temp sensors, no fan fields
+        [StructLayout(LayoutKind.Sequential, Pack = 4)]
+        private struct SensorStructNoFan
+        {
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 2)]
+            public short[] Ts; // 0.1 °C
+            public ushort Vdd; // mV
+
+            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 6)]
+            public PowerSensor[] PowerReadings;
+
+            public uint TotalPower; // mW
+            public uint TotalCurrent; // mA
+            public ushort AvgVoltage; // mV
+            public HpwrCapability HpwrCapability; // 8-bit enum
+            public ushort FaultStatus;
+            public ushort FaultLog;
+        }
+
         private enum HpwrCapability : byte
         {
             PSU_CAP_600W = 0,
