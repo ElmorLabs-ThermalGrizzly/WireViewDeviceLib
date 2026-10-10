@@ -19,8 +19,14 @@ namespace WireView2.Device
         // False for firmware that sends the compact sensor layout (SensorStructNoFan)
         protected virtual bool HasFanSensors => true;
 
+        // Set on connect by probing the size of the sensor reply; overrides HasFanSensors when known.
+        private bool? _hasFanSensorsDetected;
+        private bool UseFanSensorLayout => _hasFanSensorsDetected ?? HasFanSensors;
+
         private readonly string _portName;
         private readonly int _baud;
+
+        public string PortName => _portName;
         private SerialPort? _port;
         private CancellationTokenSource? _cts;
         private Task? _worker;
@@ -33,6 +39,8 @@ namespace WireView2.Device
         public string HardwareRevision { get; private set; } = string.Empty;
         public string FirmwareVersion { get; private set; } = string.Empty;
         public string UniqueId { get; private set; } = string.Empty;
+        public Guid Uid { get; private set; } = Guid.Empty;
+        public DeviceData? LastDeviceData { get; private set; }
         public virtual PowerControlType PowerControl => PowerControlType.PowerButton;
 
         public int ConfigVersion { get; private set; }
@@ -85,7 +93,21 @@ namespace WireView2.Device
 
                 ConfigVersion = configVersion.Value;
 
-                UniqueId = ReadUid() ?? string.Empty;
+                var uidBytes = ReadUidBytes();
+                if (uidBytes != null)
+                {
+                    UniqueId = BitConverter.ToString(uidBytes).Replace("-", string.Empty);
+                    var guidBytes = uidBytes;
+                    Array.Resize(ref guidBytes, 16);
+                    Uid = new Guid(guidBytes);
+                }
+                else
+                {
+                    UniqueId = string.Empty;
+                    Uid = Guid.Empty;
+                }
+
+                DetectSensorLayout();
 
                 Connected = true;
                 ConnectionChanged?.Invoke(this, true);
@@ -118,6 +140,9 @@ namespace WireView2.Device
             HardwareRevision = string.Empty;
             FirmwareVersion = string.Empty;
             UniqueId = string.Empty;
+            Uid = Guid.Empty;
+            LastDeviceData = null;
+            _hasFanSensorsDetected = null;
 
             ConnectionChanged?.Invoke(this, false);
         }
@@ -142,6 +167,8 @@ namespace WireView2.Device
             SendCmd(UsbCmd.CMD_BOOTLOADER);
             try { Disconnect(); } catch { }
         }
+
+        public Task EnterBootloaderAsync() => Task.Run(EnterBootloader);
 
         public DeviceConfigStructV0? ReadConfig()
         {
@@ -217,10 +244,11 @@ namespace WireView2.Device
             }
         }
 
-        public void NvmCmd(NVM_CMD cmd)
+        public bool NvmCmd(NVM_CMD cmd)
         {
-            if (!Connected || _port == null) return;
+            if (!Connected || _port == null) return false;
             SendData(new[] { (byte)UsbCmd.CMD_NVM_CONFIG, (byte)0x55, (byte)0xAA, (byte)0x55, (byte)0xAA, (byte)cmd }, 0);
+            return true;
         }
 
         public void ClearFaults(int faultStatusMask = 0xFFFF, int faultLogMask = 0xFFFF)
@@ -246,6 +274,7 @@ namespace WireView2.Device
                     }
 
                     var d = MapSensorStruct(sensors.Value);
+                    LastDeviceData = d;
                     DataUpdated?.Invoke(this, d);
 
                     // Subtract the read time so the cadence stays fixed rather than drifting by it.
@@ -285,22 +314,72 @@ namespace WireView2.Device
             return BytesToStruct<VendorDataStruct>(buf);
         }
 
-        private string? ReadUid()
+        private byte[]? ReadUidBytes()
         {
             if (_port == null) return null;
 
             const int uidBytes = 12;
-            byte[]? buf = SendCmd(UsbCmd.CMD_READ_UID, uidBytes);
+            return SendCmd(UsbCmd.CMD_READ_UID, uidBytes);
+        }
 
-            if (buf == null) return null;
-            return BitConverter.ToString(buf).Replace("-", string.Empty);
+        // The Phanteks firmware has been seen with both the compact (96 B) and the fan-field (104 B)
+        // sensor layout, so measure the actual reply size once instead of trusting HasFanSensors.
+        private void DetectSensorLayout()
+        {
+            if (_port == null) return;
+
+            _hasFanSensorsDetected = null;
+
+            lock (_port)
+            {
+                _port!.Open();
+                try
+                {
+                    _port!.DiscardInBuffer();
+                    _port!.Write(new[] { (byte)UsbCmd.CMD_READ_SENSOR_VALUES }, 0, 1);
+
+                    var buf = new byte[SensorStructSize + 16];
+                    int total = 0;
+                    int previousTimeout = _port!.ReadTimeout;
+                    _port!.ReadTimeout = 250;
+                    try
+                    {
+                        while (total < buf.Length)
+                        {
+                            int read;
+                            try
+                            {
+                                read = _port!.Read(buf, total, buf.Length - total);
+                            }
+                            catch (TimeoutException)
+                            {
+                                break;
+                            }
+
+                            if (read <= 0) break;
+                            total += read;
+                        }
+                    }
+                    finally
+                    {
+                        _port!.ReadTimeout = previousTimeout;
+                    }
+
+                    if (total == SensorStructSize) _hasFanSensorsDetected = true;
+                    else if (total == SensorStructNoFanSize) _hasFanSensorsDetected = false;
+                }
+                finally
+                {
+                    _port!.Close();
+                }
+            }
         }
 
         private SensorStruct? ReadSensorValues()
         {
             if (_port == null) return null;
 
-            if (!HasFanSensors)
+            if (!UseFanSensorLayout)
             {
                 byte[]? compactBuf = SendCmd(UsbCmd.CMD_READ_SENSOR_VALUES, SensorStructNoFanSize);
                 if (compactBuf == null) return null;
